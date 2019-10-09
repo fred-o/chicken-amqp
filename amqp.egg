@@ -1,0 +1,17 @@
+((author "Fredrik Appelberg")
+ (synopsis "AMPQ")
+ (category net)
+ (license "BSD")
+ (dependencies bitstring
+               mailbox
+			   srfi-18
+			   uri-generic)
+ (components
+  (extension amqp-091)
+  (extension amqp-core
+			 (component-dependencies amqp-091))
+  (extension amqp-primitives
+			 (component-dependencies amqp-core))
+  (extension amqp
+			 (component-dependencies amqp-primitives)))
+  (test-dependencies test))
