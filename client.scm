@@ -82,12 +82,12 @@
                    (let ((got (read-string 1 i)))
                      (if (eq? #!eof got)
                          (print "Eof")
-                         (begin 
-                           (print "read " (string-length got))
-                           (bitstring-append! buf (string->bitstring got))
+                         (let ((chunk (string-append got (read-buffered i))))
+                           (print "read " (string-length chunk))
+                           (bitstring-append! buf (string->bitstring chunk))
                            (let ((res (parse-frame buf)))
                              (set! buf (cdr res))
-                             (print (car res))
+                             ;; (print (car res))
                              (loop))))))))
     (loop)))
 
