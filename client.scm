@@ -3,6 +3,8 @@
         (chicken irregex)
         bitstring)
 
+(include "parser.scm")
+
 (define *amqp-header*
   (bitstring->string (bitconstruct
                       ("AMQP" bitstring)
@@ -30,7 +32,8 @@
                (Rest (cdr result)))
           (append (list (list (bitstring->string Name) value)) (parse-table Rest)))))))
 
-(define (parse-connection-start-arguments bits)
+(define (parse-connection-start bits)
+  (print 'parse-connection-start)
   (bitmatch
    bits
    (((VersionMajor 8)
@@ -46,14 +49,14 @@
     (print "Mechanisms " (bitstring->string Mechanisms))
     (print "Locales " (bitstring->string Locales)))))
 
-(define (parse-method bits)
-  (bitmatch
-   bits
-   (((ClassId 16)
-     (MethodId 16)
-     (Arguments bitstring))
-    (print "ClassId " ClassId " MethodId " MethodId)
-    (parse-connection-start-arguments Arguments))))
+;; (define (parse-method bits)
+;;   (bitmatch
+;;    bits
+;;    (((ClassId 16)
+;;      (MethodId 16)
+;;      (Arguments bitstring))
+;;     (print "ClassId " ClassId " MethodId " MethodId)
+;;     (parse-connection-start-arguments Arguments))))
 
 (define (parse-frame str)
   (bitmatch
@@ -69,6 +72,7 @@
      (Rest bitstring))
     (cond
      ((= Type 1)
+      (print "call parse-method")
       (cons (parse-method Payload) Rest))
      (else (error "Unimplemented type " Type))))
    (else (cons #f str))))
@@ -86,6 +90,7 @@
                            (print "read " (string-length chunk))
                            (bitstring-append! buf (string->bitstring chunk))
                            (let ((res (parse-frame buf)))
+                             (print (car res))
                              (set! buf (cdr res))
                              ;; (print (car res))
                              (loop))))))))
