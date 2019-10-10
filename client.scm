@@ -32,22 +32,18 @@
                (Rest (cdr result)))
           (append (list (list (bitstring->string Name) value)) (parse-table Rest)))))))
 
-(define (parse-connection-start bits)
-  (print 'parse-connection-start)
-  (bitmatch
-   bits
-   (((VersionMajor 8)
-     (VersionMinor 8)
-     (ServerPropertiesSize 32)
-     (ServerProperties (* ServerPropertiesSize 8) bitstring)
-     (MechanismsSize 32)
-     (Mechanisms (* MechanismsSize 8) bitstring)
-     (LocalesSize 32)
-     (Locales (* LocalesSize 8) bitstring))
-    (print "VersionMajor " VersionMajor " VersionMinor " VersionMinor)
-    (print "ServerProperties" (parse-table ServerProperties))
-    (print "Mechanisms " (bitstring->string Mechanisms))
-    (print "Locales " (bitstring->string Locales)))))
+;; (define (amqp:parse-connection-start bits)
+;;   (bitmatch
+;;    bits
+;;    (((VersionMajor 8)
+;;      (VersionMinor 8)
+;;      (ServerPropertiesSize 32) (ServerProperties (* ServerPropertiesSize 8) bitstring)
+;;      (MechanismsSize 32) (Mechanisms (* MechanismsSize 8) bitstring)
+;;      (LocalesSize 32) (Locales (* LocalesSize 8) bitstring))
+;;     (print "VersionMajor " VersionMajor " VersionMinor " VersionMinor)
+;;     (print "ServerProperties" (parse-table ServerProperties))
+;;     (print "Mechanisms " (bitstring->string Mechanisms))
+;;     (print "Locales " (bitstring->string Locales)))))
 
 ;; (define (parse-method bits)
 ;;   (bitmatch
