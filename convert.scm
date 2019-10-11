@@ -46,13 +46,15 @@
                                 (else #f)))))
                      ((sxpath '(field)) method)))))))))
 
-(for-each pp
+(for-each (lambda (form)
+            (pp form)
+            (print))
           (foldl append '()
                  (map
                   (lambda (cls)
                     (let ((class-name (spec-prop 'name cls)))
                       (map (lambda (method) (make-parser class-name method))
-                           ((sxpath '(method)) cls))))
+                           ((sxpath "method[chassis/@name = 'client']") cls))))
                   ((sxpath `(// class)) amqp-xml-spec))))
 
 (define (make-method-dispatch-clause class-name method)
@@ -67,7 +69,7 @@
     `((eq? ,class-index class-id)
       (cond ,@(map (lambda (method)
                      (make-method-dispatch-clause class-name method))
-                   ((sxpath '(method)) cls))))))
+                   ((sxpath "method[chassis/@name = 'client']") cls))))))
 
 (define (make-class-dispatch classes)
   `(cond ,@(map make-class-dispatch-clause classes)))
@@ -79,4 +81,3 @@
           (method-id 16)
           (arguments bitstring))
          ,(make-class-dispatch ((sxpath `(// class)) amqp-xml-spec))))))
-
