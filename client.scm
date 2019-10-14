@@ -35,28 +35,32 @@
                (Rest (cdr result)))
           (append (list (list (bitstring->string Name) value)) (parse-table Rest)))))))
 
+
+
 (define (parse-frame str)
   (bitmatch
    str
    ((("AMQP" 32 bitstring)
      (Version bitstring))
     (error "Server rejected protocol version"))
-   (((Type 8)
-     (Channel 16)
-     (Size 32)
-     (Payload (* 8 Size) bitstring)
+   (((type 8)
+     (channel 16)
+     (payload-size 32)
+     (payload (* 8 payload-size) bitstring)
      (#xce)
-     (Rest bitstring))
-    (print "type " Type " channel " Channel)
+     (rest bitstring))
     (cond
-     ((= Type 1)
+     ((= type 1)
       (print "call parse-method")
-      (let ((parsed-payload (parse-method Payload)))
-        (cons (make-message Type Channel (car parsed-payload) (cadr parsed-payload) (caddr parsed-payload)) Rest)))
-     (else (error "Unimplemented type " Type))))
+      (let ((parsed-payload (parse-method payload)))
+        (cons (make-message type channel (car parsed-payload) (cadr parsed-payload) (caddr parsed-payload))
+                rest)))
+     ((= type 8)
+      (print "received heartbeat" payload)
+      (cons #f rest))
+     (else (error "Unimplemented type " type))))
    (else
-    (print 'nope)
-    (cons #f str))))
+    (error "blargh"))))
 
 (define (make-frame type channel payload)
   (bitconstruct
