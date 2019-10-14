@@ -16,11 +16,23 @@
 
 ;; Data structures
 
-(define-record connection in out input-thread)
+(define-record connection in out input-thread parameters)
+
+(define-record-printer (connection c out)
+  (fprintf out "#<connection reader:~S ~S>"
+           (connection-input-thread c)
+           (connection-parameters c)))
 
 (define-record channel id mailbox)
 
 (define-record message type channel class method arguments)
+
+(define-record-printer (message msg out)
+  (fprintf out "#<message type:~S channel:~S class:~S method:~S>"
+           (message-type msg)
+           (message-channel msg)
+           (message-class msg)
+           (message-method msg)))
 
 ;; Fns
 
@@ -44,8 +56,6 @@
                (value (car result))
                (Rest (cdr result)))
           (append (list (list (bitstring->string Name) value)) (parse-table Rest)))))))
-
-
 
 (define (parse-frame str)
   (bitmatch
