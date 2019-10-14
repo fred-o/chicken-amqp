@@ -70,15 +70,14 @@
                                (domain (or (spec-prop 'domain arg)
                                            (spec-prop 'type arg))))
                           (cond
+                           ((equal? "bit" domain) `((,field-name-symbol 8)))
                            ((equal? "long" domain) `((,field-name-symbol 32)))
-                           ((equal? "longstr" domain)
-                            `((,size-symbol 32) (,field-name-symbol (* ,size-symbol 8) bitstring)))
+                           ((equal? "longstr" domain) `((,size-symbol 32) (,field-name-symbol (* ,size-symbol 8) bitstring)))
                            ((equal? "octet" domain) `((,field-name-symbol 8)))
-                           ((equal? "peer-properties" domain)
-                            `((,size-symbol 32) (,field-name-symbol (* ,size-symbol 8) bitstring)))
+                           ((equal? "path" domain) `((,size-symbol 8) (,field-name-symbol (* ,size-symbol 8) bitstring)))
+                           ((equal? "peer-properties" domain) `((,size-symbol 32) (,field-name-symbol (* ,size-symbol 8) bitstring)))
                            ((equal? "short" domain) `((,field-name-symbol 16)))
-                           ((equal? "shortstr" domain)
-                            `((,size-symbol 8) (,field-name-symbol (* ,size-symbol 8) bitstring)))
+                           ((equal? "shortstr" domain) `((,size-symbol 8) (,field-name-symbol (* ,size-symbol 8) bitstring)))
                            (else '(())))))
                       ((sxpath '(field)) method)))
          (list ,class-name ,method-name
@@ -89,9 +88,11 @@
                                           (spec-prop 'type arg))))
                          `(list ',field-name-symbol
                                ,(cond
+                                 ((equal? "bit" domain) field-name-symbol)
                                  ((equal? "long" domain) field-name-symbol)
                                  ((equal? "longstr" domain) `(bitstring->string ,field-name-symbol))
                                  ((equal? "octet" domain) field-name-symbol)
+                                 ((equal? "path" domain) `(bitstring->string ,field-name-symbol))
                                  ((equal? "peer-properties" domain) `(parse-table ,field-name-symbol))
                                  ((equal? "short" domain) field-name-symbol)
                                  ((equal? "shortstr" domain) `(bitstring->string ,field-name-symbol))
