@@ -11,6 +11,49 @@
   (let ((ret (alist-ref prop (alist-ref '@ (cdr node)))))
     (if ret (car ret) ret)))
 
+
+(define (maker-name class-name method-name)
+  (string->symbol (string-append "amqp:make-" class-name "-" method-name)))
+
+(define (make-maker class-id class-name method)
+  (let ((method-id (spec-prop 'index method))
+        (method-name (spec-prop 'name method)))
+    `(define (,(maker-name class-name method-name)
+              ,@(map (lambda (arg) (string->symbol (spec-prop 'name arg)))
+                     ((sxpath '(field)) method)))
+       (bitconstruct
+        (,(string->number class-id) 16)
+        (,(string->number method-id) 16)
+        ,@(foldl append '()
+               (map (lambda (arg)
+                      (let* ((field-name (spec-prop 'name arg))
+                             (field-name-symbol (string->symbol field-name))
+                             (domain  (or (spec-prop 'domain arg)
+                                          (spec-prop 'type arg))))
+                        (cond
+                         ((equal? "bit" domain) `((,field-name-symbol 8)))
+                         ((equal? "long" domain) `((,field-name-symbol 32)))
+                         ((equal? "longstr" domain) `(((string-length ,field-name-symbol) 32) (,field-name-symbol bitstring)))
+                         ((equal? "path" domain) `(((string-length ,field-name-symbol) 8) (,field-name-symbol bitstring)))
+                         ((equal? "peer-properties" domain) '((0 32)))
+                         ((equal? "short" domain) `((,field-name-symbol 16)))
+                         ((equal? "shortstr" domain) `(((string-length ,field-name-symbol) 8) (,field-name-symbol bitstring)))
+                         (else '(())))))
+                    ((sxpath '(field)) method)))))))
+
+(for-each (lambda (form)
+            (pp form)
+            (print))
+          (foldl append '()
+                 (map
+                  (lambda (cls)
+                    (let ((class-id (spec-prop 'index cls))
+                          (class-name (spec-prop 'name cls)))
+                      (map (lambda (method) (make-maker class-id class-name method))
+                           ((sxpath "method[chassis/@name = 'server']") cls))))
+                  ((sxpath `(// class)) amqp-xml-spec))))
+
+
 (define (parser-name class-name method-name)
   (string->symbol (string-append "amqp:parse-" class-name "-" method-name)))
 
@@ -24,7 +67,8 @@
                         (let* ((field-name (spec-prop 'name arg))
                                (field-name-symbol (string->symbol field-name))
                                (size-symbol (string->symbol (string-append field-name "-size")))
-                               (domain (spec-prop 'domain arg)))
+                               (domain (or (spec-prop 'domain arg)
+                                           (spec-prop 'type arg))))
                           (cond
                            ((equal? "long" domain) `((,field-name-symbol 32)))
                            ((equal? "longstr" domain)
@@ -41,7 +85,8 @@
                (list ,@(map (lambda (arg)
                        (let* ((field-name (spec-prop 'name arg))
                               (field-name-symbol (string->symbol field-name))
-                              (domain (spec-prop 'domain arg)))
+                              (domain (or (spec-prop 'domain arg)
+                                          (spec-prop 'type arg))))
                          `(list ',field-name-symbol
                                ,(cond
                                  ((equal? "long" domain) field-name-symbol)
@@ -51,7 +96,7 @@
                                  ((equal? "short" domain) field-name-symbol)
                                  ((equal? "shortstr" domain) `(bitstring->string ,field-name-symbol))
                                  (else #f)))))
-                     ((sxpath '(field)) method)))))))))
+                            ((sxpath '(field)) method)))))))))
 
 (for-each (lambda (form)
             (pp form)
@@ -61,12 +106,8 @@
                   (lambda (cls)
                     (let ((class-name (spec-prop 'name cls)))
                       (map (lambda (method) (make-parser class-name method))
-                           ;; ((sxpath "method[chassis/@name = 'client']") cls))))
-                           ((sxpath "method") cls))))
+                           ((sxpath "method[chassis/@name = 'client']") cls))))
                   ((sxpath `(// class)) amqp-xml-spec))))
-
-
-;; (define (make-maker class-name method))
 
 (define (make-method-dispatch-clause class-name method)
   (let ((method-name (spec-prop 'name method))
@@ -80,8 +121,7 @@
     `((eq? ,class-index class-id)
       (cond ,@(map (lambda (method)
                      (make-method-dispatch-clause class-name method))
-                   ;; ((sxpath "method[chassis/@name = 'client']") cls))))))
-                   ((sxpath "method") cls))))))
+                   ((sxpath "method[chassis/@name = 'client']") cls))))))
 
 (define (make-class-dispatch classes)
   `(cond ,@(map make-class-dispatch-clause classes)))

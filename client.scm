@@ -2,6 +2,8 @@
         (chicken io)
         (chicken irregex)
         (chicken format)
+        srfi-18
+        mailbox
         bitstring)
 
 (include "parser.scm")
@@ -11,12 +13,6 @@
                       ("AMQP" bitstring)
                       (#d0 8)
                       (0 8) (9 8) (1 8))))
-
-;; (define (make-table alist)
-;;   (foldl (lambda (entry)))
-;;   `(bitconstruct
-;;     ,(map (lambda (entry)
-;;             (((length (car entry)) 8) )))))
 
 (define (parse-type bits)
   (bitmatch
@@ -38,15 +34,6 @@
                (value (car result))
                (Rest (cdr result)))
           (append (list (list (bitstring->string Name) value)) (parse-table Rest)))))))
-
-(define (make-connection-start-ok client-properties mechanism response locale)
-  (bitconstruct
-   (10 16)
-   (11 16)
-   (0 32)
-   ((string-length mechanism) 8) (mechanism bitstring)
-   ((string-length response) 32) (response bitstring)
-   ((string-length locale) 8) (locale bitstring)))
 
 (define (parse-frame str)
   (bitmatch
@@ -79,35 +66,71 @@
    (payload bitstring)
    (#xce 8)))
 
+;; Data structures
+
+(define-record connection in out input-thread)
+
+(define-record channel id mailbox)
+
 (define-record message type channel class method arguments)
 
 (define-record-printer (message msg out)
   (fprintf out "#,(message type:~S channel:~S class:~S method:~S)" (message-type msg) (message-channel msg) (message-class msg) (message-method msg)))
 
-;; (print (car (parse-frame (make-frame 1 0 (make-connection-start-ok '() "PLAIN" "" "en_US")))))
+;; Send an AMQP message over the wire, thread safe
+(define (amqp-send connection type channel payload)
+  (print payload)
+  (write-string
+   (bitstring->string (make-frame type (channel-id channel) payload))
+   #f
+   (connection-out connection)))
 
-(define (amqp-client host port)
+;; Receive the next message on the channel, blocking
+(define (amqp-receive channel)
+  (mailbox-receive! (channel-mailbox channel)))
+
+;; Connect to AMQP server, perform handshake
+(define (amqp-connect host port)
   (define-values (i o) (tcp-connect host port))
-  (write-string *amqp-header* #f o)
   (letrec ((buf (->bitstring ""))
-           (loop (lambda ()
-                   (print "reading...")
-                   (let ((got (read-string 1 i)))
-                     (if (eq? #!eof got)
-                         (print "Eof")
-                         (let ((chunk (string-append got (read-buffered i))))
-                           (print "read " (string-length chunk))
-                           (bitstring-append! buf (string->bitstring chunk))
-                           (let ((res (parse-frame buf)))
-                             (print (car res))
-                             (print (message-arguments (car res)))
-                             (set! buf (cdr res))
+           (default-channel (make-channel 0 (make-mailbox)))
+           (read-loop (lambda ()
+                        (let ((first-byte (read-string 1 i)))
+                          (if (eq? #!eof first-byte)
+                              (print "Eof")
+                              (begin
+                                (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered i))))
+                                (let ((message-and-rest (parse-frame buf)))
+                                  (mailbox-send! (channel-mailbox default-channel) (car message-and-rest))
+                                  ;; (print (car message-and-rest))
+                                  (set! buf (cdr message-and-rest))
+                                  (read-loop))))))))
+    (let* ((input-thread (make-thread read-loop))
+           (connection (make-connection i o input-thread)))
+      (thread-start! input-thread)
+      ;; handshake
+      (write-string *amqp-header* #f o)
+      ;; security
+      (let ((msg (amqp-receive default-channel)))
+        (print msg)
+        (amqp-send connection 1 default-channel
+                   (amqp:make-connection-start-ok  '() "PLAIN" "\x00local\x00panda4ever" "en_US")))
+      ;; tune
+      (let* ((msg (amqp-receive default-channel))
+             (args (message-arguments msg)))
+        (print msg args)
+        (amqp-send connection 1 default-channel
+                   (amqp:make-connection-tune-ok (car (alist-ref 'channel-max args))
+                                                 (car (alist-ref 'frame-max args))
+                                                 (car (alist-ref 'heartbeat args)))))
+      ;; open connection
+      (amqp-send connection 1 default-channel
+                 (amqp:make-connection-open "/" "" 0))
+      (let* ((msg (amqp-receive default-channel))
+             (args (message-arguments msg)))
+        (print msg args))
+      connection)))
 
-                             (write-line (bitstring->string (make-frame 1 0 (make-connection-start-ok '() "PLAIN" "\x00local\x00panda4ever" "en_US"))) o)
+(thread-join! (connection-input-thread (amqp-connect "localhost" 5672)))
 
-                             ;; (print (car res))
-                             (loop))))))))
-    (loop)))
-
-(amqp-client "localhost" 5672)
 
