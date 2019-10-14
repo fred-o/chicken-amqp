@@ -1,6 +1,7 @@
 (import (chicken tcp)
         (chicken io)
         (chicken irregex)
+        (chicken format)
         bitstring)
 
 (include "parser.scm")
@@ -10,6 +11,12 @@
                       ("AMQP" bitstring)
                       (#d0 8)
                       (0 8) (9 8) (1 8))))
+
+;; (define (make-table alist)
+;;   (foldl (lambda (entry)))
+;;   `(bitconstruct
+;;     ,(map (lambda (entry)
+;;             (((length (car entry)) 8) )))))
 
 (define (parse-type bits)
   (bitmatch
@@ -32,27 +39,14 @@
                (Rest (cdr result)))
           (append (list (list (bitstring->string Name) value)) (parse-table Rest)))))))
 
-;; (define (amqp:parse-connection-start bits)
-;;   (bitmatch
-;;    bits
-;;    (((VersionMajor 8)
-;;      (VersionMinor 8)
-;;      (ServerPropertiesSize 32) (ServerProperties (* ServerPropertiesSize 8) bitstring)
-;;      (MechanismsSize 32) (Mechanisms (* MechanismsSize 8) bitstring)
-;;      (LocalesSize 32) (Locales (* LocalesSize 8) bitstring))
-;;     (print "VersionMajor " VersionMajor " VersionMinor " VersionMinor)
-;;     (print "ServerProperties" (parse-table ServerProperties))
-;;     (print "Mechanisms " (bitstring->string Mechanisms))
-;;     (print "Locales " (bitstring->string Locales)))))
-
-;; (define (parse-method bits)
-;;   (bitmatch
-;;    bits
-;;    (((ClassId 16)
-;;      (MethodId 16)
-;;      (Arguments bitstring))
-;;     (print "ClassId " ClassId " MethodId " MethodId)
-;;     (parse-connection-start-arguments Arguments))))
+(define (make-connection-start-ok client-properties mechanism response locale)
+  (bitconstruct
+   (10 16)
+   (11 16)
+   (0 32)
+   ((string-length mechanism) 8) (mechanism bitstring)
+   ((string-length response) 32) (response bitstring)
+   ((string-length locale) 8) (locale bitstring)))
 
 (define (parse-frame str)
   (bitmatch
@@ -66,16 +60,35 @@
      (Payload (* 8 Size) bitstring)
      (#xce)
      (Rest bitstring))
+    (print "type " Type " channel " Channel)
     (cond
      ((= Type 1)
       (print "call parse-method")
-      (cons (parse-method Payload) Rest))
+      (let ((parsed-payload (parse-method Payload)))
+        (cons (make-message Type Channel (car parsed-payload) (cadr parsed-payload) (caddr parsed-payload)) Rest)))
      (else (error "Unimplemented type " Type))))
-   (else (cons #f str))))
+   (else
+    (print 'nope)
+    (cons #f str))))
+
+(define (make-frame type channel payload)
+  (bitconstruct
+   (type 8)
+   (channel 16)
+   ((/ (bitstring-length payload) 8) 32)
+   (payload bitstring)
+   (#xce 8)))
+
+(define-record message type channel class method arguments)
+
+(define-record-printer (message msg out)
+  (fprintf out "#,(message type:~S channel:~S class:~S method:~S)" (message-type msg) (message-channel msg) (message-class msg) (message-method msg)))
+
+;; (print (car (parse-frame (make-frame 1 0 (make-connection-start-ok '() "PLAIN" "" "en_US")))))
 
 (define (amqp-client host port)
   (define-values (i o) (tcp-connect host port))
-  (write-line *amqp-header* o)
+  (write-string *amqp-header* #f o)
   (letrec ((buf (->bitstring ""))
            (loop (lambda ()
                    (print "reading...")
@@ -87,7 +100,11 @@
                            (bitstring-append! buf (string->bitstring chunk))
                            (let ((res (parse-frame buf)))
                              (print (car res))
+                             (print (message-arguments (car res)))
                              (set! buf (cdr res))
+
+                             (write-line (bitstring->string (make-frame 1 0 (make-connection-start-ok '() "PLAIN" "\x00local\x00panda4ever" "en_US"))) o)
+
                              ;; (print (car res))
                              (loop))))))))
     (loop)))

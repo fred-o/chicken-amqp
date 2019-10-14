@@ -26,11 +26,15 @@
                                (size-symbol (string->symbol (string-append field-name "-size")))
                                (domain (spec-prop 'domain arg)))
                           (cond
-                           ((equal? "octet" domain) `((,field-name-symbol 8)))
+                           ((equal? "long" domain) `((,field-name-symbol 32)))
                            ((equal? "longstr" domain)
                             `((,size-symbol 32) (,field-name-symbol (* ,size-symbol 8) bitstring)))
+                           ((equal? "octet" domain) `((,field-name-symbol 8)))
                            ((equal? "peer-properties" domain)
                             `((,size-symbol 32) (,field-name-symbol (* ,size-symbol 8) bitstring)))
+                           ((equal? "short" domain) `((,field-name-symbol 16)))
+                           ((equal? "shortstr" domain)
+                            `((,size-symbol 8) (,field-name-symbol (* ,size-symbol 8) bitstring)))
                            (else '(())))))
                       ((sxpath '(field)) method)))
          (list ,class-name ,method-name
@@ -40,10 +44,13 @@
                               (domain (spec-prop 'domain arg)))
                          `(list ',field-name-symbol
                                ,(cond
-                                ((equal? "octet" domain) field-name-symbol)
-                                ((equal? "longstr" domain) `(bitstring->string ,field-name-symbol))
-                                ((equal? "peer-properties" domain) `(parse-table ,field-name-symbol))
-                                (else #f)))))
+                                 ((equal? "long" domain) field-name-symbol)
+                                 ((equal? "longstr" domain) `(bitstring->string ,field-name-symbol))
+                                 ((equal? "octet" domain) field-name-symbol)
+                                 ((equal? "peer-properties" domain) `(parse-table ,field-name-symbol))
+                                 ((equal? "short" domain) field-name-symbol)
+                                 ((equal? "shortstr" domain) `(bitstring->string ,field-name-symbol))
+                                 (else #f)))))
                      ((sxpath '(field)) method)))))))))
 
 (for-each (lambda (form)
@@ -54,8 +61,12 @@
                   (lambda (cls)
                     (let ((class-name (spec-prop 'name cls)))
                       (map (lambda (method) (make-parser class-name method))
-                           ((sxpath "method[chassis/@name = 'client']") cls))))
+                           ;; ((sxpath "method[chassis/@name = 'client']") cls))))
+                           ((sxpath "method") cls))))
                   ((sxpath `(// class)) amqp-xml-spec))))
+
+
+;; (define (make-maker class-name method))
 
 (define (make-method-dispatch-clause class-name method)
   (let ((method-name (spec-prop 'name method))
@@ -69,7 +80,8 @@
     `((eq? ,class-index class-id)
       (cond ,@(map (lambda (method)
                      (make-method-dispatch-clause class-name method))
-                   ((sxpath "method[chassis/@name = 'client']") cls))))))
+                   ;; ((sxpath "method[chassis/@name = 'client']") cls))))))
+                   ((sxpath "method") cls))))))
 
 (define (make-class-dispatch classes)
   `(cond ,@(map make-class-dispatch-clause classes)))
@@ -80,4 +92,5 @@
         (((class-id 16)
           (method-id 16)
           (arguments bitstring))
+         (print "class-id " class-id " method-id " method-id)
          ,(make-class-dispatch ((sxpath `(// class)) amqp-xml-spec))))))
