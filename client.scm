@@ -14,6 +14,16 @@
                       (#d0 8)
                       (0 8) (9 8) (1 8))))
 
+;; Data structures
+
+(define-record connection in out input-thread)
+
+(define-record channel id mailbox)
+
+(define-record message type channel class method arguments)
+
+;; Fns
+
 (define (parse-type bits)
   (bitmatch
    bits
@@ -70,20 +80,15 @@
    (payload bitstring)
    (#xce 8)))
 
-;; Data structures
-
-(define-record connection in out input-thread)
-
-(define-record channel id mailbox)
-
-(define-record message type channel class method arguments)
-
 (define-record-printer (message msg out)
-  (fprintf out "#,(message type:~S channel:~S class:~S method:~S)" (message-type msg) (message-channel msg) (message-class msg) (message-method msg)))
+  (fprintf out "<message type:~S channel:~S class:~S method:~S>"
+           (message-type msg)
+           (message-channel msg)
+           (message-class msg)
+           (message-method msg)))
 
 ;; Send an AMQP message over the wire, thread safe
 (define (amqp-send connection type channel payload)
-  (print payload)
   (write-string
    (bitstring->string (make-frame type (channel-id channel) payload))
    #f
