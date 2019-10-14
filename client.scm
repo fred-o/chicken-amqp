@@ -110,6 +110,26 @@
     (print "heartbeat interval " interval)
     (thread-start! loop)))
 
+(define (amqp-manager connection channel)
+  (letrec ((loop (lambda ()
+                   (let ((msg (amqp-receive channel)))
+                     (print msg)
+                     (cond
+                      ((and (equal? "connection" (message-class msg))
+                            (equal? "close" (message-method msg)))
+                       (amqp-send connection 1 channel (amqp:make-connection-close-ok))
+                       (print "server closed connection: "
+                              (car (alist-ref 'reply-code (message-arguments msg)))
+                              " - "
+                              (car (alist-ref 'reply-text (message-arguments msg))))
+                       ;; release resources
+                       (thread-terminate! (connection-input-thread connection))
+                       (close-input-port (connection-in connection))
+                       (close-output-port (connection-out connection))))
+                     (loop)))))
+    (print "starting manager thread")
+    (thread-start! loop)))
+
 ;; Connect to AMQP server, perform handshake
 (define (amqp-connect host port)
   (define-values (i o) (tcp-connect host port))
@@ -151,6 +171,8 @@
         (print msg args))
       ;; start sending heartbeats
       (amqp-start-hearbeat connection default-channel)
+      ;; start manager thread
+      (amqp-manager connection default-channel)
       connection)))
 
 ;; Run it
