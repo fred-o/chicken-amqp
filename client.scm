@@ -71,12 +71,11 @@
      (rest bitstring))
     (cond
      ((= type 1)
-      (print "call parse-method")
       (let ((parsed-payload (parse-method payload)))
         (cons (make-message type channel (car parsed-payload) (cadr parsed-payload) (caddr parsed-payload))
                 rest)))
      ((= type 8)
-      (print "received heartbeat" payload)
+      ;; This is a heartbeat
       (cons #f rest))
      (else (error "Unimplemented type " type))))
    (else
@@ -90,13 +89,6 @@
    (payload bitstring)
    (#xce 8)))
 
-(define-record-printer (message msg out)
-  (fprintf out "<message type:~S channel:~S class:~S method:~S>"
-           (message-type msg)
-           (message-channel msg)
-           (message-class msg)
-           (message-method msg)))
-
 ;; Send an AMQP message over the wire, thread safe
 (define (amqp-send connection type channel payload)
   (write-string
@@ -107,6 +99,16 @@
 ;; Receive the next message on the channel, blocking
 (define (amqp-receive channel)
   (mailbox-receive! (channel-mailbox channel)))
+
+(define (amqp-start-hearbeat connection channel)
+  (letrec ((interval (/ (car (alist-ref 'heartbeat (connection-parameters connection))) 2))
+           (payload (string->bitstring ""))
+           (loop (lambda ()
+                   (amqp-send connection 8 channel payload)
+                   (sleep interval)
+                   (loop))))
+    (print "heartbeat interval " interval)
+    (thread-start! loop)))
 
 ;; Connect to AMQP server, perform handshake
 (define (amqp-connect host port)
@@ -124,7 +126,7 @@
                                   (set! buf (cdr message/rest))
                                   (read-loop))))))))
     (let* ((input-thread (make-thread read-loop))
-           (connection (make-connection i o input-thread)))
+           (connection (make-connection i o input-thread #f)))
       (thread-start! input-thread)
       ;; handshake
       (write-string *amqp-header* #f o)
@@ -136,7 +138,7 @@
       ;; tune
       (let* ((msg (amqp-receive default-channel))
              (args (message-arguments msg)))
-        (print msg args)
+        (connection-parameters-set! connection args)
         (amqp-send connection 1 default-channel
                    (amqp:make-connection-tune-ok (car (alist-ref 'channel-max args))
                                                  (car (alist-ref 'frame-max args))
@@ -147,8 +149,13 @@
       (let* ((msg (amqp-receive default-channel))
              (args (message-arguments msg)))
         (print msg args))
+      ;; start sending heartbeats
+      (amqp-start-hearbeat connection default-channel)
       connection)))
 
-(thread-join! (connection-input-thread (amqp-connect "localhost" 5672)))
+;; Run it
+(let ((c (amqp-connect "localhost" 5672)))
+  (print c)
+  (thread-join! (connection-input-thread c)))
 
 
