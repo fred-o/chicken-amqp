@@ -36,6 +36,14 @@
 
 ;; Fns
 
+(define (encode-table props)
+   (apply bitstring-append
+          (map (lambda (prop)
+                 (let ((key (car prop))
+                       (val (cdr prop)))
+                   (cond ((string? val) (bitconstruct ((string-length key) 8) (key bitstring) (#\S) ((string-length val) 32) (val bitstring))))))
+               props)))
+
 (define (parse-type bits)
   (bitmatch
    bits
@@ -154,7 +162,7 @@
       (let ((msg (amqp-receive default-channel)))
         (print msg)
         (amqp-send connection 1 default-channel
-                   (amqp:make-connection-start-ok  '() "PLAIN" "\x00local\x00panda4ever" "en_US")))
+                   (amqp:make-connection-start-ok  '(("connection_name" . "my awesome client")) "PLAIN" "\x00local\x00panda4ever" "en_US")))
       ;; tune
       (let* ((msg (amqp-receive default-channel))
              (args (message-arguments msg)))
