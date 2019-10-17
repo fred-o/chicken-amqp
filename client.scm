@@ -176,9 +176,4 @@
       (amqp-manager connection default-channel)
       connection)))
 
-;; Run it
-(let ((c (amqp-connect "localhost" 5672)))
-  (print c)
-  (thread-join! (connection-input-thread c)))
-
 
