@@ -93,7 +93,7 @@
                               (field-name-symbol (string->symbol field-name))
                               (domain (or (spec-prop 'domain arg)
                                           (spec-prop 'type arg))))
-                         `(list ',field-name-symbol
+                         `(cons ',field-name-symbol
                                ,(cond
                                  ((equal? "long" domain) field-name-symbol)
                                  ((equal? "longstr" domain) `(bitstring->string ,field-name-symbol))

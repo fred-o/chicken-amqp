@@ -49,13 +49,13 @@
       '()
       (bitmatch
        bits
-       (((Size 8)
-         (Name (* Size 8) bitstring)
-         (Rest bitstring))
-        (let* ((result (parse-type Rest))
+       (((size 8)
+         (name (* size 8) bitstring)
+         (rest bitstring))
+        (let* ((result (parse-type rest))
                (value (car result))
-               (Rest (cdr result)))
-          (append (list (list (bitstring->string Name) value)) (parse-table Rest)))))))
+               (rest (cdr result)))
+          (cons (cons (bitstring->string name) value) (parse-table rest)))))))
 
 (define (parse-frame str)
   (bitmatch
@@ -101,7 +101,7 @@
   (mailbox-receive! (channel-mailbox channel)))
 
 (define (amqp-start-hearbeat connection channel)
-  (letrec ((interval (/ (car (alist-ref 'heartbeat (connection-parameters connection))) 2))
+  (letrec ((interval (/ (alist-ref 'heartbeat (connection-parameters connection)) 2))
            (payload (string->bitstring ""))
            (loop (lambda ()
                    (amqp-send connection 8 channel payload)
@@ -119,9 +119,9 @@
                             (equal? "close" (message-method msg)))
                        (amqp-send connection 1 channel (amqp:make-connection-close-ok))
                        (print "server closed connection: "
-                              (car (alist-ref 'reply-code (message-arguments msg)))
+                              (alist-ref 'reply-code (message-arguments msg))
                               " - "
-                              (car (alist-ref 'reply-text (message-arguments msg))))
+                              (alist-ref 'reply-text (message-arguments msg)))
                        ;; release resources
                        (thread-terminate! (connection-input-thread connection))
                        (close-input-port (connection-in connection))
@@ -158,11 +158,12 @@
       ;; tune
       (let* ((msg (amqp-receive default-channel))
              (args (message-arguments msg)))
+        (print msg)
         (connection-parameters-set! connection args)
         (amqp-send connection 1 default-channel
-                   (amqp:make-connection-tune-ok (car (alist-ref 'channel-max args))
-                                                 (car (alist-ref 'frame-max args))
-                                                 (car (alist-ref 'heartbeat args)))))
+                   (amqp:make-connection-tune-ok (alist-ref 'channel-max args)
+                                                 (alist-ref 'frame-max args)
+                                                 (alist-ref 'heartbeat args))))
       ;; open connection
       (amqp-send connection 1 default-channel
                  (amqp:make-connection-open "/" "" 0))
