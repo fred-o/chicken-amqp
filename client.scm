@@ -149,8 +149,9 @@
                               (print "Eof")
                               (begin
                                 (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered i))))
-                                (let* ((message/rest (parse-frame buf)))
-                                  (mailbox-send! (channel-mailbox default-channel) (car message/rest))
+                                (let* ((message/rest (parse-frame buf))
+                                       (msg (car message/rest)))
+                                  (if msg (mailbox-send! (channel-mailbox default-channel) msg))
                                   (set! buf (cdr message/rest))
                                   (read-loop))))))))
     (let* ((input-thread (make-thread read-loop))
