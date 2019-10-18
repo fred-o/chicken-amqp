@@ -24,7 +24,7 @@
 
 (define-record channel id mailbox)
 
-(define-record message type channel class method arguments)
+(define-record message type channel class-id class method-id method arguments)
 
 (define-record-printer (message msg out)
   (fprintf out "#<message type:~S channel:~S class:~S method:~S>"
@@ -79,7 +79,7 @@
     (cond
      ((= type 1)
       (let ((parsed-payload (parse-method payload)))
-        (cons (make-message type channel (car parsed-payload) (cadr parsed-payload) (caddr parsed-payload))
+        (cons (apply make-message (append (list type channel) parsed-payload))
                 rest)))
      ((= type 8)
       ;; This is a heartbeat
@@ -149,9 +149,11 @@
 (define (pattern-match? pattern msg)
   (call/cc (lambda (return)
              (for-each (lambda (part)
-                         (cond ((and (eq? 'class (car part))
-                                     (not (equal? (message-class msg) (cdr part))))
-                                (return #f))))
+                         (let ((field (car part))
+                               (value (cdr part)))
+                         (cond
+                          ((and (eq? 'class field) (not (equal? value (message-class msg)))) (return #f))
+                          ((and (eq? 'class-id field) (not (equal? value (message-class-id msg))) (return #f))))))
                        pattern)
              (return #t))))
 
@@ -176,7 +178,7 @@
 
 (define (manager connection)
   (lambda ()
-    (letrec ((mb (dispatch-register! connection '((class . "connection"))))
+    (letrec ((mb (dispatch-register! connection '((class-id . 10))))
              (loop (lambda ()
                      (let ((msg (mailbox-receive! mb)))
                        (print 'msg msg)
