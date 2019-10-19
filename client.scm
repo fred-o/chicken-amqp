@@ -1,4 +1,8 @@
-(import (chicken tcp)
+(module amqp (amqp-connect
+              connection-threads)
+
+(import scheme (chicken base) (chicken syntax)
+        (chicken tcp)
         (chicken io)
         (chicken irregex)
         (chicken format)
@@ -19,7 +23,7 @@
 (define-record connection in out parameters threads dispatchers)
 
 (define-record-printer (connection c out)
-  (fprintf out "#<connection reader:~S>"
+  (fprintf out "#<connection parameters: ~S>"
            (connection-parameters c)))
 
 (define-record channel id mailbox)
@@ -108,36 +112,6 @@
 (define (amqp-receive channel)
   (mailbox-receive! (channel-mailbox channel)))
 
-(define (amqp-start-hearbeat connection channel)
-  (letrec ((interval (/ (alist-ref 'heartbeat (connection-parameters connection)) 2))
-           (payload (string->bitstring ""))
-           (loop (lambda ()
-                   (amqp-send connection 8 channel payload)
-                   (sleep interval)
-                   (loop))))
-    (print "heartbeat interval " interval)
-    (thread-start! loop)))
-
-;; (define (amqp-manager connection channel)
-;;   (letrec ((loop (lambda ()
-;;                    (let ((msg (amqp-receive channel)))
-;;                      (print msg)
-;;                      (cond
-;;                       ((and (equal? "connection" (message-class msg))
-;;                             (equal? "close" (message-method msg)))
-;;                        (amqp-send connection 1 channel (amqp:make-connection-close-ok))
-;;                        (print "server closed connection: "
-;;                               (alist-ref 'reply-code (message-arguments msg))
-;;                               " - "
-;;                               (alist-ref 'reply-text (message-arguments msg)))
-;;                        ;; release resources
-;;                        (thread-terminate! (connection-input-thread connection))
-;;                        (close-input-port (connection-in connection))
-;;                        (close-output-port (connection-out connection))))
-;;                      (loop)))))
-;;     (print "starting manager thread")
-;;     (thread-start! loop)))
-
 (define (dispatch-register! connection pattern)
   (let ((mb (make-mailbox)))
     (connection-dispatchers-set! connection (cons (cons pattern mb)
@@ -169,10 +143,11 @@
                              (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
                              (let* ((message/rest (parse-frame buf))
                                     (msg (car message/rest)))
-                               (for-each (lambda (disp)
-                                           (if (pattern-match? (car disp) msg) (mailbox-send! (cdr disp) msg)))
-                                         (connection-dispatchers connection))
-                               (set! buf (cdr message/rest))
+                               (when msg
+                                 (for-each (lambda (disp)
+                                             (if (pattern-match? (car disp) msg) (mailbox-send! (cdr disp) msg)))
+                                           (connection-dispatchers connection))
+                                 (set! buf (cdr message/rest)))
                                (loop))))))))
       (loop))))
 
@@ -180,11 +155,44 @@
   (lambda ()
     (letrec ((mb (dispatch-register! connection '((class-id . 10))))
              (loop (lambda ()
-                     (let ((msg (mailbox-receive! mb)))
+                     (let* ((msg (mailbox-receive! mb))
+                            (method (message-method msg)))
                        (print 'msg msg)
-                       (loop)))))
+                       (cond
+                        ((equal? "start" method)
+                         (amqp-send connection 1 0
+                                    (amqp:make-connection-start-ok  '(("connection_name" . "my awesome client"))
+                                                                    "PLAIN"
+                                                                    "\x00local\x00panda4ever"
+                                                                    "en_US")))
+                        ((equal? "tune" method)
+                         (let* ((args (message-arguments msg)))
+                           (connection-parameters-set! connection args)
+                           (amqp-send connection 1 0
+                                      (amqp:make-connection-tune-ok (alist-ref 'channel-max args)
+                                                                    (alist-ref 'frame-max args)
+                                                                    (alist-ref 'heartbeat args)))
+                           (amqp-send connection 1 0
+                                      (amqp:make-connection-open "/" "" 0))))
+                        ((equal? "open-ok" method)
+                         ;; start heartbeats)
+                         (connection-threads-set! connection
+                                                  (append (connection-threads connection)
+                                                          (list (thread-start! (heartbeats connection))))))
+                        ))
+                     (loop))))
+      ;; start 
       (write-string *amqp-header* #f (connection-out connection))
       (loop))))
+
+(define (heartbeats connection)
+  (letrec ((interval (/ (alist-ref 'heartbeat (connection-parameters connection)) 2))
+           (payload (string->bitstring ""))
+           (loop (lambda ()
+                   (amqp-send connection 8 0 payload)
+                   (sleep interval)
+                   (loop))))
+    (loop)))
 
 (define (amqp-connect host port)
   (define-values (i o) (tcp-connect host port))
@@ -195,51 +203,4 @@
                               (thread-start! (manager connection))))
     connection))
 
-;; Connect to AMQP server, perform handshake
-;; (define (amqp-connect host port)
-;;   (define-values (i o) (tcp-connect host port))
-;;   (letrec ((buf (->bitstring ""))
-;;            (default-channel (make-channel 0 (make-mailbox)))
-;;            (read-loop (lambda ()
-;;                         (let ((first-byte (read-string 1 i)))
-;;                           (if (eq? #!eof first-byte)
-;;                               (print "Eof")
-;;                               (begin
-;;                                 (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered i))))
-;;                                 (let* ((message/rest (parse-frame buf))
-;;                                        (msg (car message/rest)))
-;;                                   (if msg (mailbox-send! (channel-mailbox default-channel) msg))
-;;                                   (set! buf (cdr message/rest))
-;;                                   (read-loop))))))))
-;;     (let* ((input-thread (make-thread read-loop))
-;;            (connection (make-connection i o input-thread #f)))
-;;       (thread-start! input-thread)
-;;       ;; handshake
-;;       (write-string *amqp-header* #f o)
-;;       ;; security
-;;       (let ((msg (amqp-receive default-channel)))
-;;         (print msg)
-;;         (amqp-send connection 1 default-channel
-;;                    (amqp:make-connection-start-ok  '(("connection_name" . "my awesome client")) "PLAIN" "\x00local\x00panda4ever" "en_US")))
-;;       ;; tune
-;;       (let* ((msg (amqp-receive default-channel))
-;;              (args (message-arguments msg)))
-;;         (print msg)
-;;         (connection-parameters-set! connection args)
-;;         (amqp-send connection 1 default-channel
-;;                    (amqp:make-connection-tune-ok (alist-ref 'channel-max args)
-;;                                                  (alist-ref 'frame-max args)
-;;                                                  (alist-ref 'heartbeat args))))
-;;       ;; open connection
-;;       (amqp-send connection 1 default-channel
-;;                  (amqp:make-connection-open "/" "" 0))
-;;       (let* ((msg (amqp-receive default-channel))
-;;              (args (message-arguments msg)))
-;;         (print msg args))
-;;       ;; start sending heartbeats
-;;       (amqp-start-hearbeat connection default-channel)
-;;       ;; start manager thread
-;;       (amqp-manager connection default-channel)
-;;       connection)))
-
-
+)
