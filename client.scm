@@ -122,7 +122,7 @@
     (if (and (equal? class (message-class msg))
              (equal? method (message-method msg)))
         msg
-        (raise (fprintf "(channel –s): expected class ~S/method ~S, got ~S/~S"
+        (raise (sprintf "(channel ~S): expected class ~S/method ~S, got ~S/~S"
                         (channel-id channel)
                         class method
                         (message-class msg) (message-method msg))))))
