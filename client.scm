@@ -3,6 +3,7 @@
         (chicken io)
         (chicken irregex)
         (chicken format)
+        srfi-1
         srfi-18
         mailbox
         bitstring)
@@ -17,7 +18,7 @@
 
 ;; Data structures
 
-(define-record connection in out parameters threads dispatchers)
+(define-record connection in out parameters threads dispatchers lock)
 
 (define-record-printer (connection c out)
   (fprintf out "#<connection parameters: ~S>"
@@ -119,14 +120,23 @@
                         (message-class msg) (message-method msg))))))
 
 (define (dispatch-register! connection pattern)
-  (let ((mb (make-mailbox)))
+  (let ((mb (make-mailbox))
+        (lock (connection-lock connection)))
+    (mutex-lock! lock)
     (connection-dispatchers-set! connection (cons (cons pattern mb)
                                                   (connection-dispatchers connection)))
+    (mutex-unlock! lock)
     mb))
 
-;; (define (dispatch-unregister! connection pattern))
+(define (dispatch-unregister! connection mailbox)
+  (let ((lock (connection-lock connection)))
+    (mutex-lock! lock)
+    (connection-dispatchers-set! connection 
+                                 (filter (lambda (dispatch) (not (eq? mailbox (cdr dispatch))))
+                                         (connection-dispatchers connection)))
+    (mutex-unlock! lock)))
 
-(define (pattern-match? pattern msg)
+(define (dispatch-pattern-match? pattern msg)
   (call/cc (lambda (return)
              (for-each (lambda (part)
                          (let ((field (car part))
@@ -153,7 +163,7 @@
                                     (msg (car message/rest)))
                                (when msg
                                  (for-each (lambda (disp)
-                                             (if (pattern-match? (car disp) msg) (mailbox-send! (cdr disp) msg)))
+                                             (if (dispatch-pattern-match? (car disp) msg) (mailbox-send! (cdr disp) msg)))
                                            (connection-dispatchers connection))
                                  (set! buf (cdr message/rest)))
                                (loop))))))))
@@ -186,7 +196,9 @@
                                         (amqp:make-connection-open "/" "" 0))))
                           ((equal? "open-ok" method)
                            (set! done #t)))
-                         (unless done (loop))))))
+                         (if done
+                             (dispatch-unregister! conn mb) ;; clean up 
+                             (loop))))))
         ;; start 
         (write-string *amqp-header* #f (connection-out conn))
         (loop)))))
@@ -203,7 +215,7 @@
 
 (define (amqp-connect host port)
   (define-values (i o) (tcp-connect host port))
-  (let* ((connection (make-connection i o #f '() '()))
+  (let* ((connection (make-connection i o #f '() '() (make-mutex)))
          (default-channel (make-channel 0 (make-mailbox) connection))
          (dispatcher-thread (thread-start! (dispatcher connection)))
          (handshake-thread (thread-start! (make-thread (handshake default-channel)))))
