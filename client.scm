@@ -238,6 +238,8 @@
 
 ;; client api
 
+(define (default-0) 0)
+
 (define (channel-open conn)
   (let* ((id (next-channel-id conn))
          (mb (dispatch-register! conn `((channel-id . ,id) (type . 1))))
@@ -246,20 +248,19 @@
     (amqp-expect ch "channel" "open-ok")
     ch))
 
-(define (default-0) 0)
-
-(define (queue-declare channel name . args)
-  (amqp-send channel 1 (amqp:make-queue-declare name
+(define (queue-declare channel queue . args)
+  (amqp-send channel 1 (amqp:make-queue-declare queue
                                                 (get-keyword passive: args default-0)
                                                 (get-keyword durable: args default-0)
                                                 (get-keyword exclusive: args default-0)
                                                 (get-keyword auto-delete: args default-0)
                                                 (get-keyword no-wait: args default-0)
                                                 '()))
-  (amqp-expect channel "queue" "declare-ok"))
-;  (amqp-receive channel))
+  (let ((reply (amqp-expect channel "queue" "declare-ok")))
+    (alist-ref 'queue (message-arguments reply))))
 
-;; (define (exchange-declare-passive name))
-
-;; (define (queue-declare channel queue-name durable auto-delete)
-;;   (amqp-send (channel-connection channel)))
+(define (queue-bind channel queue exchange routing-key . args)
+  (amqp-send channel 1 (amqp:make-queue-bind queue exchange routing-key
+                                             (get-keyword no-wait: args default-0)
+                                             '()))
+  (amqp-expect channel "queue" "bind-ok"))
