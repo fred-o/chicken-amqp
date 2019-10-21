@@ -18,7 +18,7 @@
 
 ;; Data structures
 
-(define-record connection in out parameters threads dispatchers lock)
+(define-record connection in out parameters threads dispatchers lock channel-id-seq)
 
 (define-record-printer (connection c out)
   (fprintf out "#<connection parameters: ~S>"
@@ -36,6 +36,14 @@
            (message-method msg)))
 
 ;; Fns
+
+(define (next-channel-id connection)
+  (let ((lock (connection-lock connection))
+        (id (connection-channel-id-seq connection)))
+    (mutex-lock! lock)
+    (connection-channel-id-seq-set! connection (+ 1 id))
+    (mutex-unlock! lock)
+    id))
 
 (define (encode-table props)
    (apply bitstring-append
@@ -215,7 +223,7 @@
 
 (define (amqp-connect host port)
   (define-values (i o) (tcp-connect host port))
-  (let* ((connection (make-connection i o #f '() '() (make-mutex)))
+  (let* ((connection (make-connection i o #f '() '() (make-mutex) 1))
          (default-channel (make-channel 0 (make-mailbox) connection))
          (dispatcher-thread (thread-start! (dispatcher connection)))
          (handshake-thread (thread-start! (make-thread (handshake default-channel)))))
@@ -230,14 +238,14 @@
 ;; client
 
 (define (channel-open conn)
-  (let* ((id 1)
+  (let* ((id (next-channel-id conn))
          (mb (dispatch-register! conn '((channel . id) (type . 1))))
          (ch (make-channel id mb conn)))
     (amqp-send ch 1 (amqp:make-channel-open ""))
     (amqp-expect ch "channel" "open-ok")
     ch))
 
-(define (exchange-declare name type durable) #f)
+;; (define (exchange-declare name type durable))
 
 ;; (define (exchange-declare-passive name))
 
