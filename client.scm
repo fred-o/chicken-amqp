@@ -23,7 +23,7 @@
   (fprintf out "#<connection parameters: ~S>"
            (connection-parameters c)))
 
-(define-record channel id mailbox)
+(define-record channel id mailbox connection)
 
 (define-record message type channel class-id class method-id method arguments)
 
@@ -98,12 +98,11 @@
    (#xce 8)))
 
 ;; Send an AMQP message over the wire, thread safe
-(define (amqp-send connection type channel payload)
-  (let ((channel-id (if (channel? channel) (channel-id channel) channel)))
-    (write-string
-     (bitstring->string (make-frame type channel-id payload))
-     #f
-     (connection-out connection))))
+(define (amqp-send channel type payload)
+  (write-string
+   (bitstring->string (make-frame type (channel-id channel) payload))
+   #f
+   (connection-out (channel-connection channel))))
 
 ;; Receive the next message on the channel, blocking
 (define (amqp-receive channel)
@@ -132,10 +131,11 @@
              (for-each (lambda (part)
                          (let ((field (car part))
                                (value (cdr part)))
-                         (cond
-                          ((and (eq? 'class field) (not (equal? value (message-class msg)))) (return #f))
-                          ((and (eq? 'class-id field) (not (equal? value (message-class-id msg))) (return #f)))
-                          ((and (eq? 'channel field) (not (equal? value (message-channel msg))))) (return #f))))
+                           (cond
+                            ((and (eq? 'type field) (not (equal? value (message-type msg)))) (return #f))
+                            ((and (eq? 'class field) (not (equal? value (message-class msg)))) (return #f))
+                            ((and (eq? 'class-id field) (not (equal? value (message-class-id msg))) (return #f)))
+                            ((and (eq? 'channel field) (not (equal? value (message-channel msg))))) (return #f))))
                        pattern)
              (return #t))))
 
@@ -159,64 +159,75 @@
                                (loop))))))))
       (loop))))
 
-(define (manager connection)
+(define (handshake channel)
   (lambda ()
-    (letrec ((mb (dispatch-register! connection '((class-id . 10))))
-             (loop (lambda ()
-                     (let* ((msg (mailbox-receive! mb))
-                            (method (message-method msg)))
-                       (print 'msg msg)
-                       (cond
-                        ((equal? "start" method)
-                         (amqp-send connection 1 0
-                                    (amqp:make-connection-start-ok  '(("connection_name" . "my awesome client"))
-                                                                    "PLAIN"
-                                                                    "\x00local\x00panda4ever"
-                                                                    "en_US")))
-                        ((equal? "tune" method)
-                         (let* ((args (message-arguments msg)))
-                           (connection-parameters-set! connection args)
-                           (amqp-send connection 1 0
-                                      (amqp:make-connection-tune-ok (alist-ref 'channel-max args)
-                                                                    (alist-ref 'frame-max args)
-                                                                    (alist-ref 'heartbeat args)))
-                           (amqp-send connection 1 0
-                                      (amqp:make-connection-open "/" "" 0))))
-                        ((equal? "open-ok" method)
-                         ;; start heartbeats)
-                         (connection-threads-set! connection
-                                                  (append (connection-threads connection)
-                                                          (list (thread-start! (heartbeats connection))))))
-                        ))
-                     (loop))))
-      ;; start 
-      (write-string *amqp-header* #f (connection-out connection))
-      (loop))))
+    (let* ((conn (channel-connection channel))
+           (mb (dispatch-register! conn '((class-id . 10))))
+           (done #f))
+      (letrec ((loop (lambda ()
+                       (let* ((msg (mailbox-receive! mb))
+                              (method (message-method msg)))
+                         (print 'msg msg)
+                         (cond
+                          ((equal? "start" method)
+                           (amqp-send channel 1
+                                      (amqp:make-connection-start-ok  '(("connection_name" . "my awesome client"))
+                                                                      "PLAIN"
+                                                                      "\x00local\x00panda4ever"
+                                                                      "en_US")))
+                          ((equal? "tune" method)
+                           (let* ((args (message-arguments msg)))
+                             (connection-parameters-set! conn args)
+                             (amqp-send channel 1
+                                        (amqp:make-connection-tune-ok (alist-ref 'channel-max args)
+                                                                      (alist-ref 'frame-max args)
+                                                                      (alist-ref 'heartbeat args)))
+                             (amqp-send channel 1
+                                        (amqp:make-connection-open "/" "" 0))))
+                          ((equal? "open-ok" method)
+                           (set! done #t)))
+                         (unless done (loop))))))
+        ;; start 
+        (write-string *amqp-header* #f (connection-out conn))
+        (loop)))))
 
-(define (heartbeats connection)
-  (letrec ((interval (/ (alist-ref 'heartbeat (connection-parameters connection)) 2))
-           (payload (string->bitstring ""))
-           (loop (lambda ()
-                   (amqp-send connection 8 0 payload)
-                   (sleep interval)
-                   (loop))))
-    (loop)))
+(define (heartbeats channel)
+  (lambda ()
+    (letrec ((interval (/ (alist-ref 'heartbeat (connection-parameters (channel-connection channel))) 2))
+             (payload (string->bitstring ""))
+             (loop (lambda ()
+                     (amqp-send channel 8 payload)
+                     (sleep interval)
+                     (loop))))
+      (loop))))
 
 (define (amqp-connect host port)
   (define-values (i o) (tcp-connect host port))
-  (let* ((connection (make-connection i o #f '() '())))
-    (connection-threads-set! connection
-                             (list
-                              (thread-start! (dispatcher connection))
-                              (thread-start! (manager connection))))
+  (let* ((connection (make-connection i o #f '() '()))
+         (default-channel (make-channel 0 (make-mailbox) connection))
+         (dispatcher-thread (thread-start! (dispatcher connection)))
+         (handshake-thread (thread-start! (make-thread (handshake default-channel)))))
+    ;; wait for handshake to finish
+    (thread-join! handshake-thread)
+    ;; start the heartbeat thread
+    (connection-threads-set! connection (list dispatcher-thread
+                                              (thread-start! (heartbeats default-channel))))
+    ;; ...annnd we are done!
     connection))
 
 ;; client
 
 (define (channel-open conn)
   (let* ((id 1)
-         (mb (dispatch-register! conn '((channel . id))))
-         (ch (make-channel id mb)))
-    (amqp-send conn 1 ch (amqp:make-channel-open ""))
+         (mb (dispatch-register! conn '((channel . id) (type . 1))))
+         (ch (make-channel id mb conn)))
+    (amqp-send ch 1 (amqp:make-channel-open ""))
     (amqp-expect ch "channel" "open-ok")
     ch))
+
+(define (exchange-declare name type durable) #f)
+
+;; (define (exchange-declare-passive name))
+
+;; (define (queue-declare channel queue-name durable auto-delete)
+;;   (amqp-send (channel-connection channel)))
