@@ -1,6 +1,3 @@
-(module amqp (amqp-connect
-              connection-threads)
-
 (import scheme (chicken base) (chicken syntax)
         (chicken tcp)
         (chicken io)
@@ -104,13 +101,23 @@
 (define (amqp-send connection type channel payload)
   (let ((channel-id (if (channel? channel) (channel-id channel) channel)))
     (write-string
-     (bitstring->string (make-frame type channel payload))
+     (bitstring->string (make-frame type channel-id payload))
      #f
      (connection-out connection))))
 
 ;; Receive the next message on the channel, blocking
 (define (amqp-receive channel)
   (mailbox-receive! (channel-mailbox channel)))
+
+(define (amqp-expect channel class method)
+  (let ((msg (amqp-receive channel)))
+    (if (and (equal? class (message-class msg))
+             (equal? method (message-method msg)))
+        msg
+        (raise (fprintf "(channel –s): expected class ~S/method ~S, got ~S/~S"
+                        (channel-id channel)
+                        class method
+                        (message-class msg) (message-method msg))))))
 
 (define (dispatch-register! connection pattern)
   (let ((mb (make-mailbox)))
@@ -127,7 +134,8 @@
                                (value (cdr part)))
                          (cond
                           ((and (eq? 'class field) (not (equal? value (message-class msg)))) (return #f))
-                          ((and (eq? 'class-id field) (not (equal? value (message-class-id msg))) (return #f))))))
+                          ((and (eq? 'class-id field) (not (equal? value (message-class-id msg))) (return #f)))
+                          ((and (eq? 'channel field) (not (equal? value (message-channel msg))))) (return #f))))
                        pattern)
              (return #t))))
 
@@ -203,4 +211,12 @@
                               (thread-start! (manager connection))))
     connection))
 
-)
+;; client
+
+(define (channel-open conn)
+  (let* ((id 1)
+         (mb (dispatch-register! conn '((channel . id))))
+         (ch (make-channel id mb)))
+    (amqp-send conn 1 ch (amqp:make-channel-open ""))
+    (amqp-expect ch "channel" "open-ok")
+    ch))
