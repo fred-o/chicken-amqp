@@ -5,6 +5,7 @@
         (chicken format)
         srfi-1
         srfi-18
+        srfi-88
         mailbox
         bitstring)
 
@@ -235,7 +236,7 @@
     ;; ...annnd we are done!
     connection))
 
-;; client
+;; client api
 
 (define (channel-open conn)
   (let* ((id (next-channel-id conn))
@@ -245,9 +246,18 @@
     (amqp-expect ch "channel" "open-ok")
     ch))
 
-(define (queue-declare channel name durable)
-  (amqp-send channel 1 (amqp:make-queue-declare name 1 durable 1 1 1 '()))
+(define (default-0) 0)
+
+(define (queue-declare channel name . args)
+  (amqp-send channel 1 (amqp:make-queue-declare name
+                                                (get-keyword passive: args default-0)
+                                                (get-keyword durable: args default-0)
+                                                (get-keyword exclusive: args default-0)
+                                                (get-keyword auto-delete: args default-0)
+                                                (get-keyword no-wait: args default-0)
+                                                '()))
   (amqp-expect channel "queue" "declare-ok"))
+;  (amqp-receive channel))
 
 ;; (define (exchange-declare-passive name))
 
