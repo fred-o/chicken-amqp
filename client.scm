@@ -154,7 +154,7 @@
                             ((and (eq? 'type field) (not (equal? value (message-type msg)))) (return #f))
                             ((and (eq? 'class field) (not (equal? value (message-class msg)))) (return #f))
                             ((and (eq? 'class-id field) (not (equal? value (message-class-id msg))) (return #f)))
-                            ((and (eq? 'channel field) (not (equal? value (message-channel msg))))) (return #f))))
+                            ((and (eq? 'channel-id field) (not (equal? value (message-channel msg)))) (return #f)))))
                        pattern)
              (return #t))))
 
@@ -240,7 +240,7 @@
 
 (define (channel-open conn)
   (let* ((id (next-channel-id conn))
-         (mb (dispatch-register! conn '((channel . id) (type . 1))))
+         (mb (dispatch-register! conn `((channel-id . ,id) (type . 1))))
          (ch (make-channel id mb conn)))
     (amqp-send ch 1 (amqp:make-channel-open))
     (amqp-expect ch "channel" "open-ok")
