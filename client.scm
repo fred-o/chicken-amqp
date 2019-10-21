@@ -201,7 +201,7 @@
                                                                       (alist-ref 'frame-max args)
                                                                       (alist-ref 'heartbeat args)))
                              (amqp-send channel 1
-                                        (amqp:make-connection-open "/" "" 0))))
+                                        (amqp:make-connection-open "/"))))
                           ((equal? "open-ok" method)
                            (set! done #t)))
                          (if done
@@ -241,11 +241,13 @@
   (let* ((id (next-channel-id conn))
          (mb (dispatch-register! conn '((channel . id) (type . 1))))
          (ch (make-channel id mb conn)))
-    (amqp-send ch 1 (amqp:make-channel-open ""))
+    (amqp-send ch 1 (amqp:make-channel-open))
     (amqp-expect ch "channel" "open-ok")
     ch))
 
-;; (define (exchange-declare name type durable))
+(define (queue-declare channel name durable)
+  (amqp-send channel 1 (amqp:make-queue-declare name 1 durable 1 1 1 '()))
+  (amqp-expect channel "queue" "declare-ok"))
 
 ;; (define (exchange-declare-passive name))
 
