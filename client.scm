@@ -87,17 +87,21 @@
      (payload (* 8 payload-size) bitstring)
      (#xce)
      (rest bitstring))
-    (cond
-     ((= type 1)
-      (let ((parsed-payload (parse-method payload)))
-        (cons (apply make-message (append (list type channel) parsed-payload))
-                rest)))
-     ((= type 8)
-      ;; This is a heartbeat
+    (case type
+     ((1) (let ((parsed-payload (parse-method payload)))
+            (cons (apply make-message (append (list type channel) parsed-payload))
+                  rest)))
+     ((2) ;; frame header
+      (print "header: type " type " channel " channel " payload-size " payload-size)
       (cons #f rest))
+     ((3) ;; frame body
+      (print "body: type " type " channel " channel " payload-size " payload-size)
+      (cons #f rest))
+     ((8) (cons #f rest)) ;; This is a heartbeat
      (else (error "Unimplemented type " type))))
    (else
-    (error "blargh"))))
+    ;; no match (yet)
+    (cons #f str))))
 
 (define (make-frame type channel payload)
   (bitconstruct
@@ -168,14 +172,18 @@
                            (print "Eof")
                            (begin
                              (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
-                             (let* ((message/rest (parse-frame buf))
-                                    (msg (car message/rest)))
-                               (when msg
-                                 (for-each (lambda (disp)
-                                             (if (dispatch-pattern-match? (car disp) msg) (mailbox-send! (cdr disp) msg)))
-                                           (connection-dispatchers connection))
-                                 (set! buf (cdr message/rest)))
-                               (loop))))))))
+                             (letrec [(parse-loop (lambda ()
+                                                    (let* ((message/rest (parse-frame buf))
+                                                           (msg (car message/rest)))
+                                                      (print msg)
+                                                      (set! buf (cdr message/rest))
+                                                      (when msg
+                                                        (for-each (lambda (disp)
+                                                                    (when (dispatch-pattern-match? (car disp) msg) (mailbox-send! (cdr disp) msg)))
+                                                                  (connection-dispatchers connection))
+                                                        (parse-loop)))))]
+                               (parse-loop))))
+                       (loop)))))
       (loop))))
 
 (define (handshake channel)
