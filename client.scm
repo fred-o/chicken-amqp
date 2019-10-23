@@ -3,6 +3,7 @@
         (chicken io)
         (chicken irregex)
         (chicken format)
+        (chicken bitwise)
         srfi-1
         srfi-18
         srfi-88
@@ -27,14 +28,26 @@
 
 (define-record channel id mailbox connection)
 
+(define-record-printer (channel ch out)
+  (fprintf out "#<channel: ~S>" id))
+
+(define-record frame type channel class-id class method-id method properties payload)
+
+(define-record-printer (frame msg out)
+  (fprintf out "#<frame type:~S channel:~S class:~S method:~S>"
+           (frame-type msg)
+           (frame-channel msg)
+           (frame-class msg)
+           (frame-method msg)))
+
+;; (define-record method-frame class-id method-id arguments)
+
+;; (define-record header type channel class-id)
+
+;; (define-record content payload)
+
 (define-record message type channel class-id class method-id method arguments)
 
-(define-record-printer (message msg out)
-  (fprintf out "#<message type:~S channel:~S class:~S method:~S>"
-           (message-type msg)
-           (message-channel msg)
-           (message-class msg)
-           (message-method msg)))
 
 ;; Fns
 
@@ -89,11 +102,12 @@
      (rest bitstring))
     (case type
      ((1) (let ((parsed-payload (parse-method payload)))
-            (cons (apply make-message (append (list type channel) parsed-payload))
+            (cons (apply make-frame (append (list type channel) parsed-payload '(#f)))
                   rest)))
-     ((2) ;; frame header
-      (print "header: type " type " channel " channel " payload-size " payload-size)
-      (cons #f rest))
+     ((2) (let [(parsed-payload (parse-headers-payload payload))]
+            (print parsed-payload)
+            (cons (apply make-frame (append (list type channel) parsed-payload '(#f)))
+                  rest)))
      ((3) ;; frame body
       (print "body: type " type " channel " channel " payload-size " payload-size)
       (cons #f rest))
@@ -103,7 +117,7 @@
     ;; no match (yet)
     (cons #f str))))
 
-(define (make-frame type channel payload)
+(define (encode-frame type channel payload)
   (bitconstruct
    (type 8)
    (channel 16)
@@ -111,10 +125,75 @@
    (payload bitstring)
    (#xce 8)))
 
+(define (bit-value n pos) (if (bit->boolean n pos) 1 0))
+
+(define (parse-headers-payload bits)
+  (bitmatch
+   bits
+   (((class-id 16)
+     (weight 16)
+     (body-size 64)
+     (flags 16)
+     (content-type-size (* 8 (bit-value flags 15))) (content-type (* 8 content-type-size) bitstring)
+     (content-encoding-size (* 8 (bit-value flags 14))) (content-encoding (* 8 content-encoding-size) bitstring)
+     (headers-size (* 32 (bit-value flags 13))) (headers (* 8 headers-size) bitstring)
+     (delivery-mode (* 8 (bit-value flags 12)))
+     (priority (* 8 (bit-value flags 11)))
+     (correlation-id-size (* 8 (bit-value flags 10))) (correlation-id (* 8 correlation-id-size) bitstring)
+     (reply-to-size (* 8 (bit-value flags 9))) (reply-to (* 8 reply-to-size) bitstring)
+     (expiration-size (* 8 (bit-value flags 8))) (expiration (* 8 expiration-size) bitstring)
+     (message-id-size (* 8 (bit-value flags 7))) (message-id (* 8 message-id-size) bitstring)
+     (timestamp (* 64 (bit-value flags 6)))
+     (type-size (* 8 (bit-value flags 5))) (type (* 8 type-size) bitstring)
+     (user-id-size (* 8 (bit-value flags 4))) (user-id (* 8 user-id-size) bitstring)
+     (app-id-size (* 8 (bit-value flags 3))) (app-id (* 8 app-id-size) bitstring))
+    (list class-id "class" 0 "method"
+          (list (cons 'content-type (bitstring->string content-type))
+                (cons 'content-encoding (bitstring->string content-encoding))
+                (cons 'headers (parse-table headers))
+                (cons 'delivery-mode delivery-mode)
+                (cons 'priority priority)
+                (cons 'correlation-id (bitstring->string correlation-id))
+                (cons 'reply-to (bitstring->string reply-to))
+                (cons 'expiration (bitstring->string expiration))
+                (cons 'message-id (bitstring->string message-id))
+                (cons 'timestamp timestamp)
+                (cons 'type (bitstring->string type))
+                (cons 'user-id (bitstring->string user-id))
+                (cons 'app-id (bitstring->string app-id)))))))
+
+    ;; (letrec [(parse-shortstr-property (lambda (payload)
+    ;;                            (bitmatch (((size 8)
+    ;;                                        (text (* 8 size) bitstring)
+    ;;                                        (rest bitstring))
+    ;;                                       (cons (bitstring->string text) rest)))))
+    ;;          (parse-table-property (lambda (payload)
+    ;;                                  (bitmatch (((size 32)
+    ;;                                              (table (* 8 size) bitstring)
+    ;;                                              (rest bitstring))
+    ;;                                            (cons (parse-table table) rest)))))
+    ;;          (parse-octet-property (lambda (payload)
+    ;;                                  (bitmatch (((octet 8)
+    ;;                                              (rest bitstring))
+    ;;                                             (const octet rest)))))
+    ;;          (parse-properties (lambda (flags properties payload)
+    ;;                              (if (null-list? properties) '()
+    ;;                                  (let* [(flags (arithmetic-shift flags 1))
+    ;;                                         (field-present (bitwise-and #x10000 flags))]
+    ;;                                    (if (= 0 field-present)
+    ;;                                        (parse-properties flags (cdr properties) payload)
+    ;;                                        (let [(result ((car properties) payload))]
+    ;;                                          (cons (car result) (parse-properties flags (cdr properties) (cdr result)))))))))]
+    ;;   (print (parse-properties flags (list (cons 'content-type parse-shortstr-property)
+    ;;                                        (cons 'content-encoding parse-shortstr-property)
+    ;;                                        (cons 'headers parse-table-property)
+    ;;                                        (cons ')))
+    ;;          (make-message ))))
+
 ;; Send an AMQP message over the wire, thread safe
 (define (amqp-send channel type payload)
   (write-string
-   (bitstring->string (make-frame type (channel-id channel) payload))
+   (bitstring->string (encode-frame type (channel-id channel) payload))
    #f
    (connection-out (channel-connection channel))))
 
@@ -124,13 +203,13 @@
 
 (define (amqp-expect channel class method)
   (let ((msg (amqp-receive channel)))
-    (if (and (equal? class (message-class msg))
-             (equal? method (message-method msg)))
+    (if (and (equal? class (frame-class msg))
+             (equal? method (frame-method msg)))
         msg
         (raise (sprintf "(channel ~S): expected class ~S/method ~S, got ~S/~S"
                         (channel-id channel)
                         class method
-                        (message-class msg) (message-method msg))))))
+                        (frame-class msg) (frame-method msg))))))
 
 (define (dispatch-register! connection pattern)
   (let ((mb (make-mailbox))
@@ -155,10 +234,10 @@
                          (let ((field (car part))
                                (value (cdr part)))
                            (cond
-                            ((and (eq? 'type field) (not (equal? value (message-type msg)))) (return #f))
-                            ((and (eq? 'class field) (not (equal? value (message-class msg)))) (return #f))
-                            ((and (eq? 'class-id field) (not (equal? value (message-class-id msg))) (return #f)))
-                            ((and (eq? 'channel-id field) (not (equal? value (message-channel msg)))) (return #f)))))
+                            ((and (eq? 'type field) (not (equal? value (frame-type msg)))) (return #f))
+                            ((and (eq? 'class field) (not (equal? value (frame-class msg)))) (return #f))
+                            ((and (eq? 'class-id field) (not (equal? value (frame-class-id msg))) (return #f)))
+                            ((and (eq? 'channel-id field) (not (equal? value (frame-channel msg)))) (return #f)))))
                        pattern)
              (return #t))))
 
@@ -179,7 +258,8 @@
                                                       (set! buf (cdr message/rest))
                                                       (when msg
                                                         (for-each (lambda (disp)
-                                                                    (when (dispatch-pattern-match? (car disp) msg) (mailbox-send! (cdr disp) msg)))
+                                                                    (when (dispatch-pattern-match? (car disp) msg)
+                                                                      (mailbox-send! (cdr disp) msg)))
                                                                   (connection-dispatchers connection))
                                                         (parse-loop)))))]
                                (parse-loop))))
@@ -193,7 +273,7 @@
            (done #f))
       (letrec ((loop (lambda ()
                        (let* ((msg (mailbox-receive! mb))
-                              (method (message-method msg)))
+                              (method (frame-method msg)))
                          (print 'msg msg)
                          (cond
                           ((equal? "start" method)
@@ -203,7 +283,7 @@
                                                                       "\x00local\x00panda4ever"
                                                                       "en_US")))
                           ((equal? "tune" method)
-                           (let* ((args (message-arguments msg)))
+                           (let* ((args (frame-properties msg)))
                              (connection-parameters-set! conn args)
                              (amqp-send channel 1
                                         (amqp:make-connection-tune-ok (alist-ref 'channel-max args)
@@ -256,19 +336,23 @@
     (amqp-expect ch "channel" "open-ok")
     ch))
 
-(define (queue-declare channel queue . args)
-  (amqp-send channel 1 (amqp:make-queue-declare queue
-                                                (get-keyword passive: args default-0)
-                                                (get-keyword durable: args default-0)
-                                                (get-keyword exclusive: args default-0)
-                                                (get-keyword auto-delete: args default-0)
-                                                (get-keyword no-wait: args default-0)
-                                                '()))
+(define (queue-declare channel queue #!key (passive 0) (durable 0) (exclusive 0) (auto-delete 0) (no-wait 0))
+  (amqp-send channel 1 (amqp:make-queue-declare queue passive durable exclusive auto-delete no-wait '()))
   (let ((reply (amqp-expect channel "queue" "declare-ok")))
-    (alist-ref 'queue (message-arguments reply))))
+    (alist-ref 'queue (frame-properties reply))))
 
 (define (queue-bind channel queue exchange routing-key . args)
   (amqp-send channel 1 (amqp:make-queue-bind queue exchange routing-key
                                              (get-keyword no-wait: args default-0)
                                              '()))
   (amqp-expect channel "queue" "bind-ok"))
+
+(define (consume channel queue . flags)
+  (let ((tag "2abc"))
+  (amqp-send channel 1 (amqp:make-basic-consume queue tag
+                                                (get-keyword no-local: flags default-0)
+                                                (get-keyword no-ack: flags default-0)
+                                                (get-keyword exclusive: flags default-0)
+                                                (get-keyword no-wait: flags default-0)
+                                                '()))
+  (amqp-expect channel "basic" "consume-ok")))
