@@ -137,7 +137,7 @@
                                  (equal? "reply-text" domain)) `((,size-symbol 8) (,field-name-symbol (* ,size-symbol 8) bitstring)))
                             (else '(())))))
                        ((sxpath '(field)) method))))
-         (list ,(string->number class-id) ,class-name ,(string->number method-id) ,method-name
+         (list ,(string->number class-id) ,(string->number method-id)
                (list ,@(map (lambda (arg)
                               (let* ((field-name (spec-prop 'name arg))
                                      (field-name-symbol (string->symbol field-name))
