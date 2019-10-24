@@ -199,13 +199,13 @@
 (define (dispatch-pattern-match? pattern frm)
   (call/cc (lambda (return)
              (for-each (lambda (part)
-                         (let ((field (car part))
-                               (value (cdr part)))
-                           (cond
-                            ((and (eq? 'type field) (not (equal? value (frame-type frm)))) (return #f))
-                            ((and (eq? 'class field) (not (equal? value (frame-class frm)))) (return #f))
-                            ((and (eq? 'class-id field) (not (equal? value (frame-class-id frm))) (return #f)))
-                            ((and (eq? 'channel-id field) (not (equal? value (frame-channel frm)))) (return #f)))))
+                         (let [(field (car part))
+                               (value (cdr part))]
+                           (unless (case field
+                                     (('type) (= value (frame-type frm)))
+                                     (('class-id) (= value (frame-class-id frm)))
+                                     (('channel-id) (= value (frame-channel frm))))
+                             (return #f))))
                        pattern)
              (return #t))))
 
