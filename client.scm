@@ -33,12 +33,12 @@
 
 (define-record frame type channel class-id method-id properties payload)
 
-(define-record-printer (frame msg out)
+(define-record-printer (frame frm out)
   (fprintf out "#<frame type:~S channel:~S class:~S method:~S>"
-           (frame-type msg)
-           (frame-channel msg)
-           (frame-class-id msg)
-           (frame-method-id msg)))
+           (frame-type frm)
+           (frame-channel frm)
+           (frame-class-id frm)
+           (frame-method-id frm)))
 
 ;; (define-record method-frame class-id method-id arguments)
 
@@ -170,14 +170,14 @@
   (mailbox-receive! (channel-mailbox channel)))
 
 (define (amqp-expect channel class-id method-id)
-  (let ((msg (amqp-receive channel)))
-    (if (and (equal? class-id (frame-class-id msg))
-             (equal? method-id (frame-method-id msg)))
-        msg
+  (let ((frm (amqp-receive channel)))
+    (if (and (equal? class-id (frame-class-id frm))
+             (equal? method-id (frame-method-id frm)))
+        frm
         (raise (sprintf "(channel ~S): expected class ~S/method ~S, got ~S/~S"
                         (channel-id channel)
                         class-id method-id
-                        (frame-class-id msg) (frame-method-id msg))))))
+                        (frame-class-id frm) (frame-method-id frm))))))
 
 (define (dispatch-register! connection pattern)
   (let ((mb (make-mailbox))
@@ -196,16 +196,16 @@
                                          (connection-dispatchers connection)))
     (mutex-unlock! lock)))
 
-(define (dispatch-pattern-match? pattern msg)
+(define (dispatch-pattern-match? pattern frm)
   (call/cc (lambda (return)
              (for-each (lambda (part)
                          (let ((field (car part))
                                (value (cdr part)))
                            (cond
-                            ((and (eq? 'type field) (not (equal? value (frame-type msg)))) (return #f))
-                            ((and (eq? 'class field) (not (equal? value (frame-class msg)))) (return #f))
-                            ((and (eq? 'class-id field) (not (equal? value (frame-class-id msg))) (return #f)))
-                            ((and (eq? 'channel-id field) (not (equal? value (frame-channel msg)))) (return #f)))))
+                            ((and (eq? 'type field) (not (equal? value (frame-type frm)))) (return #f))
+                            ((and (eq? 'class field) (not (equal? value (frame-class frm)))) (return #f))
+                            ((and (eq? 'class-id field) (not (equal? value (frame-class-id frm))) (return #f)))
+                            ((and (eq? 'channel-id field) (not (equal? value (frame-channel frm)))) (return #f)))))
                        pattern)
              (return #t))))
 
@@ -221,13 +221,13 @@
                              (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
                              (letrec [(parse-loop (lambda ()
                                                     (let* ((message/rest (parse-frame buf))
-                                                           (msg (car message/rest)))
-                                                      (print msg)
+                                                           (frm (car message/rest)))
                                                       (set! buf (cdr message/rest))
-                                                      (when msg
+                                                      (when frm
+                                                        (print frm)
                                                         (for-each (lambda (disp)
-                                                                    (when (dispatch-pattern-match? (car disp) msg)
-                                                                      (mailbox-send! (cdr disp) msg)))
+                                                                    (when (dispatch-pattern-match? (car disp) frm)
+                                                                      (mailbox-send! (cdr disp) frm)))
                                                                   (connection-dispatchers connection))
                                                         (parse-loop)))))]
                                (parse-loop))))
@@ -240,9 +240,9 @@
            (mb (dispatch-register! conn '((class-id . 10))))
            (done #f))
       (letrec ((loop (lambda ()
-                       (let* ((msg (mailbox-receive! mb))
-                              (method-id (frame-method-id msg)))
-                         (print 'msg msg)
+                       (let* ((frm (mailbox-receive! mb))
+                              (method-id (frame-method-id frm)))
+                         (print 'frm frm)
                          (cond
                           ((equal? 10 method-id)
                            (amqp-send channel 1
@@ -251,7 +251,7 @@
                                                                       "\x00local\x00panda4ever"
                                                                       "en_US")))
                           ((equal? 30 method-id)
-                           (let* ((args (frame-properties msg)))
+                           (let* ((args (frame-properties frm)))
                              (connection-parameters-set! conn args)
                              (amqp-send channel 1
                                         (amqp:make-connection-tune-ok (alist-ref 'channel-max args)

@@ -206,5 +206,4 @@
         (((class-id 16)
           (method-id 16)
           (arguments bitstring))
-         (print "class-id " class-id " method-id " method-id)
          ,(make-class-dispatch ((sxpath `(// class)) amqp-xml-spec))))))
