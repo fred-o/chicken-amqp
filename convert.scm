@@ -200,7 +200,7 @@
 (define (make-class-dispatch classes)
   `(cond ,@(map make-class-dispatch-clause classes)))
 
-(pp `(define (parse-method bits)
+(pp `(define (parse-method-payload bits)
        (bitmatch
         bits
         (((class-id 16)

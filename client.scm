@@ -101,17 +101,14 @@
      (#xce)
      (rest bitstring))
     (case type
-     ((1) (let [(parsed-payload (parse-method payload))]
-            (cons (apply make-frame (append (list type channel) parsed-payload '(#f)))
-                  rest)))
-     ((2) (let [(parsed-payload (parse-headers-payload payload))]
-            (cons (apply make-frame (append (list type channel) parsed-payload '(#f)))
-                  rest)))
-     ((3) ;; frame body
-      (print "body: type " type " channel " channel " payload-size " payload-size)
-      (cons #f rest))
-     ((8) (cons #f rest)) ;; This is a heartbeat
-     (else (error "Unimplemented type " type))))
+      ((1) (cons (apply make-frame (append (list type channel) (parse-method-payload payload) '(#f)))
+                 rest))
+      ((2) (cons (apply make-frame (append (list type channel) (parse-headers-payload payload) '(#f)))
+                 rest))
+      ((3) (cons (make-frame type channel 0 0 #f payload)
+                 rest))
+      ((8) (cons #f rest)) ;; This is a heartbeat
+      (else (error "Unimplemented type " type))))
    (else
     ;; no match (yet)
     (cons #f str))))
