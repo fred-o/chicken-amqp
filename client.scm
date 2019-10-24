@@ -191,7 +191,7 @@
 (define (dispatch-unregister! connection mailbox)
   (let ((lock (connection-lock connection)))
     (mutex-lock! lock)
-    (connection-dispatchers-set! connection 
+    (connection-dispatchers-set! connection
                                  (filter (lambda (dispatch) (not (eq? mailbox (cdr dispatch))))
                                          (connection-dispatchers connection)))
     (mutex-unlock! lock)))
@@ -224,7 +224,7 @@
                                                            (frm (car message/rest)))
                                                       (set! buf (cdr message/rest))
                                                       (when frm
-                                                        (print frm)
+                                                        (print "dispatching: " frm)
                                                         (for-each (lambda (disp)
                                                                     (when (dispatch-pattern-match? (car disp) frm)
                                                                       (mailbox-send! (cdr disp) frm)))
@@ -242,7 +242,6 @@
       (letrec ((loop (lambda ()
                        (let* ((frm (mailbox-receive! mb))
                               (method-id (frame-method-id frm)))
-                         (print 'frm frm)
                          (cond
                           ((equal? 10 method-id)
                            (amqp-send channel 1
@@ -292,21 +291,19 @@
     ;; ...annnd we are done!
     connection))
 
-;; client api
-
-(define (default-0) 0)
+;; AMQP primitives API
 
 (define (channel-open conn)
-  (let* ((id (next-channel-id conn))
+  (let* [(id (next-channel-id conn))
          (mb (dispatch-register! conn `((channel-id . ,id) (type . 1))))
-         (ch (make-channel id mb conn)))
+         (ch (make-channel id mb conn))]
     (amqp-send ch 1 (amqp:make-channel-open))
     (amqp-expect ch 20 11)
     ch))
 
 (define (queue-declare channel queue #!key (passive 0) (durable 0) (exclusive 0) (auto-delete 0) (no-wait 0))
   (amqp-send channel 1 (amqp:make-queue-declare queue passive durable exclusive auto-delete no-wait '()))
-  (let ((reply (amqp-expect channel 50 11)))
+  (let [(reply (amqp-expect channel 50 11))]
     (alist-ref 'queue (frame-properties reply))))
 
 (define (queue-bind channel queue exchange routing-key . args)
@@ -315,12 +312,7 @@
                                              '()))
   (amqp-expect channel 50 21))
 
-(define (consume channel queue . flags)
-  (let ((tag "2abc"))
-  (amqp-send channel 1 (amqp:make-basic-consume queue tag
-                                                (get-keyword no-local: flags default-0)
-                                                (get-keyword no-ack: flags default-0)
-                                                (get-keyword exclusive: flags default-0)
-                                                (get-keyword no-wait: flags default-0)
-                                                '()))
-  (amqp-expect channel 60 21)))
+(define (basic-consume channel queue  #!key (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0))
+  (let [(tag "2abc")]
+    (amqp-send channel 1 (amqp:make-basic-consume queue tag no-local no-ack exclusive no-wait '()))
+    (amqp-expect channel 60 21)))
