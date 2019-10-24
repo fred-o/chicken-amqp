@@ -177,7 +177,13 @@
       (connection-threads-set! connection (list dispatcher-thread
                                                 (thread-start! (heartbeats default-channel))))
       ;; ...annnd we are done!
-      connection))
+      connection)))
+
+(module amqp-primitives *
+
+  (import scheme (chicken base) (chicken syntax)
+          amqp-core
+          amqp091)
 
   ;; AMQP primitives API
 
@@ -202,4 +208,4 @@
     (let [(tag "2abc")]
       (amqp-send channel 1 (make-basic-consume queue tag no-local no-ack exclusive no-wait '()))
       (amqp-expect channel 60 21)))
-  )
+)
