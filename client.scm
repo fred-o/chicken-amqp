@@ -198,7 +198,10 @@
                            ;; method messages go to regular mailbox
                            (dispatch-register! conn
                                                (lambda (type channel-id class-id method-id)
-                                                 (and (= channel-id id) (= type 1))))
+                                                 (and (= channel-id id)
+                                                      (= type 1)
+                                                      (not (and (= class-id 60)
+                                                                (= method-id 60))))))
                            ;; content-bearing messages go to the content mailbox
                            (dispatch-register! conn
                                                (lambda (type channel-id class-id method-id)
