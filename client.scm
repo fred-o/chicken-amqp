@@ -67,8 +67,9 @@
                         class-id method-id
                         (frame-class-id frm) (frame-method-id frm))))))
 
-(define (dispatch-register! connection pattern mb)
-  (let ((lock (connection-lock connection)))
+(define (dispatch-register! connection pattern)
+  (let [(lock (connection-lock connection))
+        (mb (make-mailbox))]
     (mutex-lock! lock)
     (connection-dispatchers-set! connection (cons (cons pattern mb)
                                                   (connection-dispatchers connection)))
@@ -84,19 +85,10 @@
     (mutex-unlock! lock)))
 
 (define (dispatch-pattern-match? pattern frm)
-  (call/cc (lambda (return)
-             (for-each (lambda (part)
-                         (let [(field (car part))
-                               (value (cdr part))]
-                           (unless (cond
-                                    ((eq? 'type field) (= value (frame-type frm)))
-                                    ((eq? 'class-id field) (= value (frame-class-id frm)))
-                                    ((eq? 'method-id field) (= value (frame-method-id frm)))
-                                    ((eq? 'channel-id field) (= value (frame-channel frm)))
-                                    (else (raise (sprintf "Unknown pattern: [~S]" field))))
-                             (return #f))))
-                       pattern)
-             (return #t))))
+  (pattern (frame-type frm)
+           (frame-channel frm)
+           (frame-class-id frm)
+           (frame-method-id frm)))
 
 (define (dispatcher connection)
   (lambda ()
@@ -125,10 +117,9 @@
 
 (define (handshake channel)
   (lambda ()
-    (let* ((conn (channel-connection channel))
-           (mb (make-mailbox))
-           (done #f))
-      (dispatch-register! conn '((class-id . 10)) mb)
+    (let* [(conn (channel-connection channel))
+           (mb (dispatch-register! conn (lambda (type channel class-id method-id) (= class-id 10))))
+           (done #f)]
       (letrec ((loop (lambda ()
                        (let* ((frm (mailbox-receive! mb))
                               (method-id (frame-method-id frm)))
@@ -196,13 +187,20 @@
 
 (define (channel-open conn)
   (let* [(id (next-channel-id conn))
-         (mmb (make-mailbox))
-         (cmb (make-mailbox))
-         (ch (make-channel id mmb cmb conn))]
-    (dispatch-register! conn `((channel-id . ,id) (type . 1)) mmb)
-    ;; (dispatch-register! conn `((channel-id . ,id) (type . 1) (class-id . 60) (method-id . 60)) cmb)
-    ;; (dispatch-register! conn `((channel-id . ,id) (type . 2)) cmb)
-    ;; (dispatch-register! conn `((channel-id . ,id) (type . 3)) cmb)
+         (ch (make-channel id
+                           ;; method messages go to regular mailbox
+                           (dispatch-register! conn
+                                               (lambda (type channel-id class-id method-id)
+                                                 (and (= channel-id id) (= type 1))))
+                           ;; content-bearing messages go to the content mailbox
+                           (dispatch-register! conn
+                                               (lambda (type channel-id class-id method-id)
+                                                 (and (= channel-id id)
+                                                      (or (= type 2)
+                                                          (= type 3)
+                                                          (and (= class-id 60)
+                                                               (= method-id 60))))))
+                           conn))]
     (amqp-send ch 1 (make-channel-open))
     (amqp-expect ch 20 11)
     ch))
