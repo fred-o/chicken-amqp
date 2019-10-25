@@ -54,11 +54,14 @@
    (connection-out (channel-connection channel))))
 
 ;; Receive the next message on the channel, blocking
-(define (amqp-receive channel)
-  (mailbox-receive! (channel-method-mailbox channel)))
+(define (amqp-receive channel #!key (mailbox 'method))
+  (mailbox-receive! (cond ((eq? 'method mailbox)
+                           (channel-method-mailbox channel))
+                          ((eq? 'content mailbox)
+                           (channel-content-mailbox channel)))))
 
-(define (amqp-expect channel class-id method-id)
-  (let ((frm (amqp-receive channel)))
+(define (amqp-expect channel class-id method-id #!key (mailbox 'method))
+  (let ((frm (amqp-receive channel mailbox: mailbox)))
     (if (and (equal? class-id (frame-class-id frm))
              (equal? method-id (frame-method-id frm)))
         frm
@@ -176,14 +179,18 @@
 
 (import scheme (chicken base) (chicken syntax)
         mailbox
+        bitstring
         amqp-core
         amqp091)
 
 ;; AMQP primitives API
 
-;; (define (receive-message channel)
-
-;;   ())
+(define (receive-message channel)
+  (let* [(mthd (amqp-expect channel 60 60 mailbox: 'content))
+         (hdrs (amqp-receive channel mailbox: 'content))
+         (buf (string->bitstring ""))]
+    (print '---> mthd (frame-properties mthd))
+    (print '---> hdrs (frame-properties hdrs))))
 
 (define (channel-open conn)
   (let* [(id (next-channel-id conn))
