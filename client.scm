@@ -54,14 +54,14 @@
    (connection-out (channel-connection channel))))
 
 ;; Receive the next message on the channel, blocking
-(define (amqp-receive channel #!key (mailbox 'method))
+(define (receive-frame channel #!key (mailbox 'method))
   (mailbox-receive! (cond ((eq? 'method mailbox)
                            (channel-method-mailbox channel))
                           ((eq? 'content mailbox)
                            (channel-content-mailbox channel)))))
 
-(define (amqp-expect channel class-id method-id #!key (mailbox 'method))
-  (let ((frm (amqp-receive channel mailbox: mailbox)))
+(define (expect-frame channel class-id method-id #!key (mailbox 'method))
+  (let ((frm (receive-frame channel mailbox: mailbox)))
     (if (and (equal? class-id (frame-class-id frm))
              (equal? method-id (frame-method-id frm)))
         frm
@@ -186,8 +186,8 @@
 ;; AMQP primitives API
 
 (define (receive-message channel)
-  (let* [(mthd (amqp-expect channel 60 60 mailbox: 'content))
-         (hdrs (amqp-receive channel mailbox: 'content))
+  (let* [(mthd (expect-frame channel 60 60 mailbox: 'content))
+         (hdrs (receive-frame channel mailbox: 'content))
          (buf (string->bitstring ""))]
     (print '---> mthd (frame-properties mthd))
     (print '---> hdrs (frame-properties hdrs))))
@@ -209,21 +209,21 @@
                                                                (= method-id 60))))))
                            conn))]
     (amqp-send ch 1 (make-channel-open))
-    (amqp-expect ch 20 11)
+    (expect-frame ch 20 11)
     ch))
 
 (define (queue-declare channel queue #!key (passive 0) (durable 0) (exclusive 0) (auto-delete 0) (no-wait 0))
   (amqp-send channel 1 (make-queue-declare queue passive durable exclusive auto-delete no-wait '()))
-  (let [(reply (amqp-expect channel 50 11))]
+  (let [(reply (expect-frame channel 50 11))]
     (alist-ref 'queue (frame-properties reply))))
 
 (define (queue-bind channel queue exchange routing-key #!key (no-wait 0))
   (amqp-send channel 1 (make-queue-bind queue exchange routing-key no-wait '()))
-  (amqp-expect channel 50 21))
+  (expect-frame channel 50 21))
 
 (define (basic-consume channel queue  #!key (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0))
   (let [(tag "2abc")]
     (amqp-send channel 1 (make-basic-consume queue tag no-local no-ack exclusive no-wait '()))
-    (amqp-expect channel 60 21)))
+    (expect-frame channel 60 21)))
 
 )
