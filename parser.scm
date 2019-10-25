@@ -274,6 +274,7 @@
       (locales (* locales-size 8) bitstring))
      (list 10
            10
+           #f
            (list (cons 'version-major version-major)
                  (cons 'version-minor version-minor)
                  (cons 'server-properties (parse-table server-properties))
@@ -284,7 +285,7 @@
   (bitmatch
     bits
     (((challenge-size 32) (challenge (* challenge-size 8) bitstring))
-     (list 10 20 (list (cons 'challenge (bitstring->string challenge)))))))
+     (list 10 20 #f (list (cons 'challenge (bitstring->string challenge)))))))
 
 (define (parse-connection-tune bits)
   (bitmatch
@@ -292,6 +293,7 @@
     (((channel-max 16) (frame-max 32) (heartbeat 16))
      (list 10
            30
+           #f
            (list (cons 'channel-max channel-max)
                  (cons 'frame-max frame-max)
                  (cons 'heartbeat heartbeat))))))
@@ -300,7 +302,10 @@
   (bitmatch
     bits
     (((reserved-1-size 8) (reserved-1 (* reserved-1-size 8) bitstring))
-     (list 10 41 (list (cons 'reserved-1 (bitstring->string reserved-1)))))))
+     (list 10
+           41
+           #f
+           (list (cons 'reserved-1 (bitstring->string reserved-1)))))))
 
 (define (parse-connection-close bits)
   (bitmatch
@@ -312,28 +317,32 @@
       (method-id 16))
      (list 10
            50
+           #f
            (list (cons 'reply-code reply-code)
                  (cons 'reply-text (bitstring->string reply-text))
                  (cons 'class-id class-id)
                  (cons 'method-id method-id))))))
 
-(define (parse-connection-close-ok bits) (list 10 51 '()))
+(define (parse-connection-close-ok bits) (list 10 51 #f '()))
 
 (define (parse-channel-open-ok bits)
   (bitmatch
     bits
     (((reserved-1-size 32) (reserved-1 (* reserved-1-size 8) bitstring))
-     (list 20 11 (list (cons 'reserved-1 (bitstring->string reserved-1)))))))
+     (list 20
+           11
+           #f
+           (list (cons 'reserved-1 (bitstring->string reserved-1)))))))
 
 (define (parse-channel-flow bits)
   (bitmatch
     bits
-    (((0 7) (active 1)) (list 20 20 (list (cons 'active active))))))
+    (((0 7) (active 1)) (list 20 20 #f (list (cons 'active active))))))
 
 (define (parse-channel-flow-ok bits)
   (bitmatch
     bits
-    (((0 7) (active 1)) (list 20 21 (list (cons 'active active))))))
+    (((0 7) (active 1)) (list 20 21 #f (list (cons 'active active))))))
 
 (define (parse-channel-close bits)
   (bitmatch
@@ -345,16 +354,17 @@
       (method-id 16))
      (list 20
            40
+           #f
            (list (cons 'reply-code reply-code)
                  (cons 'reply-text (bitstring->string reply-text))
                  (cons 'class-id class-id)
                  (cons 'method-id method-id))))))
 
-(define (parse-channel-close-ok bits) (list 20 41 '()))
+(define (parse-channel-close-ok bits) (list 20 41 #f '()))
 
-(define (parse-exchange-declare-ok bits) (list 40 11 '()))
+(define (parse-exchange-declare-ok bits) (list 40 11 #f '()))
 
-(define (parse-exchange-delete-ok bits) (list 40 21 '()))
+(define (parse-exchange-delete-ok bits) (list 40 21 #f '()))
 
 (define (parse-queue-declare-ok bits)
   (bitmatch
@@ -365,27 +375,28 @@
       (consumer-count 32))
      (list 50
            11
+           #f
            (list (cons 'queue (bitstring->string queue))
                  (cons 'message-count message-count)
                  (cons 'consumer-count consumer-count))))))
 
-(define (parse-queue-bind-ok bits) (list 50 21 '()))
+(define (parse-queue-bind-ok bits) (list 50 21 #f '()))
 
-(define (parse-queue-unbind-ok bits) (list 50 51 '()))
+(define (parse-queue-unbind-ok bits) (list 50 51 #f '()))
 
 (define (parse-queue-purge-ok bits)
   (bitmatch
     bits
     (((message-count 32))
-     (list 50 31 (list (cons 'message-count message-count))))))
+     (list 50 31 #f (list (cons 'message-count message-count))))))
 
 (define (parse-queue-delete-ok bits)
   (bitmatch
     bits
     (((message-count 32))
-     (list 50 41 (list (cons 'message-count message-count))))))
+     (list 50 41 #f (list (cons 'message-count message-count))))))
 
-(define (parse-basic-qos-ok bits) (list 60 11 '()))
+(define (parse-basic-qos-ok bits) (list 60 11 #f '()))
 
 (define (parse-basic-consume-ok bits)
   (bitmatch
@@ -393,6 +404,7 @@
     (((consumer-tag-size 8) (consumer-tag (* consumer-tag-size 8) bitstring))
      (list 60
            21
+           #f
            (list (cons 'consumer-tag (bitstring->string consumer-tag)))))))
 
 (define (parse-basic-cancel-ok bits)
@@ -401,6 +413,7 @@
     (((consumer-tag-size 8) (consumer-tag (* consumer-tag-size 8) bitstring))
      (list 60
            31
+           #f
            (list (cons 'consumer-tag (bitstring->string consumer-tag)))))))
 
 (define (parse-basic-return bits)
@@ -415,6 +428,7 @@
       (routing-key (* routing-key-size 8) bitstring))
      (list 60
            50
+           #f
            (list (cons 'reply-code reply-code)
                  (cons 'reply-text (bitstring->string reply-text))
                  (cons 'exchange (bitstring->string exchange))
@@ -434,6 +448,7 @@
       (routing-key (* routing-key-size 8) bitstring))
      (list 60
            60
+           #f
            (list (cons 'consumer-tag (bitstring->string consumer-tag))
                  (cons 'delivery-tag delivery-tag)
                  (cons 'redelivered redelivered)
@@ -453,6 +468,7 @@
       (message-count 32))
      (list 60
            71
+           #f
            (list (cons 'delivery-tag delivery-tag)
                  (cons 'redelivered redelivered)
                  (cons 'exchange (bitstring->string exchange))
@@ -463,15 +479,18 @@
   (bitmatch
     bits
     (((reserved-1-size 8) (reserved-1 (* reserved-1-size 8) bitstring))
-     (list 60 72 (list (cons 'reserved-1 (bitstring->string reserved-1)))))))
+     (list 60
+           72
+           #f
+           (list (cons 'reserved-1 (bitstring->string reserved-1)))))))
 
-(define (parse-basic-recover-ok bits) (list 60 111 '()))
+(define (parse-basic-recover-ok bits) (list 60 111 #f '()))
 
-(define (parse-tx-select-ok bits) (list 90 11 '()))
+(define (parse-tx-select-ok bits) (list 90 11 #f '()))
 
-(define (parse-tx-commit-ok bits) (list 90 21 '()))
+(define (parse-tx-commit-ok bits) (list 90 21 #f '()))
 
-(define (parse-tx-rollback-ok bits) (list 90 31 '()))
+(define (parse-tx-rollback-ok bits) (list 90 31 #f '()))
 
 (define (parse-method-payload bits)
   (bitmatch

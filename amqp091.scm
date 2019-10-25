@@ -7,7 +7,7 @@
           srfi-1
           bitstring)
 
-  (define-record frame type channel class-id method-id properties payload)
+  (define-record frame type channel class-id method-id body-size properties payload)
 
   (define-record-printer (frame frm out)
     (fprintf out "#<frame type:~S channel:~S class:~S method:~S>"
@@ -67,7 +67,7 @@
      (type-size (* 8 (bit-value flags 5))) (type (* 8 type-size) bitstring)
      (user-id-size (* 8 (bit-value flags 4))) (user-id (* 8 user-id-size) bitstring)
      (app-id-size (* 8 (bit-value flags 3))) (app-id (* 8 app-id-size) bitstring))
-    (list class-id 0
+    (list class-id 0 body-size
           (list (cons 'content-type (bitstring->string content-type))
                 (cons 'content-encoding (bitstring->string content-encoding))
                 (cons 'headers (parse-table headers))
@@ -99,7 +99,7 @@
                  rest))
       ((2) (cons (apply make-frame (append (list type channel) (parse-headers-payload payload) '(#f)))
                  rest))
-      ((3) (cons (make-frame type channel 0 0 #f payload)
+      ((3) (cons (make-frame type channel 0 0 #f #f payload)
                  rest))
       ((8) (cons #f rest)) ;; This is a heartbeat
       (else (error "Unimplemented type " type))))

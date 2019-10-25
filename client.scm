@@ -185,12 +185,19 @@
 
 ;; AMQP primitives API
 
+(define-record message delivery properties payload)
+
 (define (receive-message channel)
   (let* [(mthd (expect-frame channel 60 60 mailbox: 'content))
          (hdrs (receive-frame channel mailbox: 'content))
+         (body-size (frame-body-size hdrs))
          (buf (string->bitstring ""))]
-    (print '---> mthd (frame-properties mthd))
-    (print '---> hdrs (frame-properties hdrs))))
+    (let loop []
+      (when (< (bitstring-length buf) body-size)
+        (set! buf (bitstring-append! buf
+                                     (frame-payload (receive-frame channel mailbox: 'content))))
+        (loop)))
+    (make-message (frame-properties mthd) (frame-properties hdrs) buf)))
 
 (define (channel-open conn)
   (let* [(id (next-channel-id conn))

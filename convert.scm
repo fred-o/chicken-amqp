@@ -103,7 +103,7 @@
         (fields ((sxpath '(field)) method)))
     `(define (,(parser-name class-name method-name) bits)
        ,(if (null-list? fields)
-            `(list ,(string->number class-id) ,(string->number method-id) '())
+            `(list ,(string->number class-id) ,(string->number method-id) #f '())
             `(bitmatch
               bits
               (,(pack-bitfields
@@ -140,7 +140,7 @@
                                        (equal? "reply-text" domain)) `((,size-symbol 8) (,field-name-symbol (* ,size-symbol 8) bitstring)))
                                   (else '(())))))
                              fields)))
-               (list ,(string->number class-id) ,(string->number method-id)
+               (list ,(string->number class-id) ,(string->number method-id) #f
                      (list ,@(map (lambda (arg)
                                     (let* ((field-name (spec-prop 'name arg))
                                            (field-name-symbol (string->symbol field-name))
