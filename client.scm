@@ -231,9 +231,18 @@
   (amqp-send channel 1 (make-queue-bind queue exchange routing-key no-wait '()))
   (expect-frame channel 50 21))
 
+(define (basic-qos channel prefetch-size prefetch-count global)
+  (amqp-send channel 1 (make-basic-qos prefetch-size prefetch-count global))
+  (expect-frame channel 60 11))
+
 (define (basic-consume channel queue  #!key (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0))
   (let [(tag "2abc")]
     (amqp-send channel 1 (make-basic-consume queue tag no-local no-ack exclusive no-wait '()))
     (expect-frame channel 60 21)))
 
+(define (basic-ack channel delivery-tag #!key (multiple 0))
+  (amqp-send channel 1 (make-basic-ack delivery-tag multiple)))
+
+(define (basic-reject channel delivery-tag #!key (requeue 0))
+  (amqp-send channel 1 (make-basic-reject delivery-tag requeue)))
 )
