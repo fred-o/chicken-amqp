@@ -46,14 +46,14 @@
     (mutex-unlock! lock)
     id))
 
-;; Send an AMQP message over the wire, thread safe
-(define (amqp-send channel type payload)
+;; Send an AMQP frame over the wire, thread safe
+(define (send-frame channel type payload)
   (write-string
    (bitstring->string (encode-frame type (channel-id channel) payload))
    #f
    (connection-out (channel-connection channel))))
 
-;; Receive the next message on the channel, blocking
+;; Receive the next frame on the channel, blocking
 (define (receive-frame channel #!key (mailbox 'method))
   (mailbox-receive! (cond ((eq? 'method mailbox)
                            (channel-method-mailbox channel))
@@ -128,7 +128,7 @@
                               (method-id (frame-method-id frm)))
                          (cond
                           ((equal? 10 method-id)
-                           (amqp-send channel 1
+                           (send-frame channel 1
                                       (make-connection-start-ok  '(("connection_name" . "my awesome client"))
                                                                  "PLAIN"
                                                                  "\x00local\x00panda4ever"
@@ -136,11 +136,11 @@
                           ((equal? 30 method-id)
                            (let* ((args (frame-properties frm)))
                              (connection-parameters-set! conn args)
-                             (amqp-send channel 1
+                             (send-frame channel 1
                                         (make-connection-tune-ok (alist-ref 'channel-max args)
                                                                  (alist-ref 'frame-max args)
                                                                  (alist-ref 'heartbeat args)))
-                             (amqp-send channel 1
+                             (send-frame channel 1
                                         (make-connection-open "/"))))
                           ((equal? 41 method-id)
                            (set! done #t)))
@@ -156,7 +156,7 @@
     (letrec ((interval (/ (alist-ref 'heartbeat (connection-parameters (channel-connection channel))) 2))
              (payload (string->bitstring ""))
              (loop (lambda ()
-                     (amqp-send channel 8 payload)
+                     (send-frame channel 8 payload)
                      (sleep interval)
                      (loop))))
       (loop))))
@@ -218,31 +218,31 @@
                                                           (and (= class-id 60)
                                                                (= method-id 60))))))
                            conn))]
-    (amqp-send ch 1 (make-channel-open))
+    (send-frame ch 1 (make-channel-open))
     (expect-frame ch 20 11)
     ch))
 
 (define (queue-declare channel queue #!key (passive 0) (durable 0) (exclusive 0) (auto-delete 0) (no-wait 0))
-  (amqp-send channel 1 (make-queue-declare queue passive durable exclusive auto-delete no-wait '()))
+  (send-frame channel 1 (make-queue-declare queue passive durable exclusive auto-delete no-wait '()))
   (let [(reply (expect-frame channel 50 11))]
     (alist-ref 'queue (frame-properties reply))))
 
 (define (queue-bind channel queue exchange routing-key #!key (no-wait 0))
-  (amqp-send channel 1 (make-queue-bind queue exchange routing-key no-wait '()))
+  (send-frame channel 1 (make-queue-bind queue exchange routing-key no-wait '()))
   (expect-frame channel 50 21))
 
 (define (basic-qos channel prefetch-size prefetch-count global)
-  (amqp-send channel 1 (make-basic-qos prefetch-size prefetch-count global))
+  (send-frame channel 1 (make-basic-qos prefetch-size prefetch-count global))
   (expect-frame channel 60 11))
 
 (define (basic-consume channel queue  #!key (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0))
   (let [(tag "2abc")]
-    (amqp-send channel 1 (make-basic-consume queue tag no-local no-ack exclusive no-wait '()))
+    (send-frame channel 1 (make-basic-consume queue tag no-local no-ack exclusive no-wait '()))
     (expect-frame channel 60 21)))
 
 (define (basic-ack channel delivery-tag #!key (multiple 0))
-  (amqp-send channel 1 (make-basic-ack delivery-tag multiple)))
+  (send-frame channel 1 (make-basic-ack delivery-tag multiple)))
 
 (define (basic-reject channel delivery-tag #!key (requeue 0))
-  (amqp-send channel 1 (make-basic-reject delivery-tag requeue)))
+  (send-frame channel 1 (make-basic-reject delivery-tag requeue)))
 )
