@@ -32,7 +32,7 @@
 (define-record channel id method-mailbox content-mailbox connection)
 
 (define-record-printer (channel ch out)
-  (fprintf out "#<channel: ~S>" (channel-id channel)))
+  (fprintf out "#<channel: ~S>" (channel-id ch)))
 
 ;; (define-record message type channel class-id class method-id method arguments)
 
