@@ -180,6 +180,7 @@
 (import scheme (chicken base) (chicken syntax)
         mailbox
         bitstring
+        uuid-v4
         amqp-core
         amqp091)
 
@@ -236,7 +237,7 @@
   (expect-frame channel 60 11))
 
 (define (basic-consume channel queue  #!key (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0))
-  (let [(tag "2abc")]
+  (let [(tag (make-uuid))]
     (send-frame channel 1 (make-basic-consume queue tag no-local no-ack exclusive no-wait '()))
     (expect-frame channel 60 21)))
 
