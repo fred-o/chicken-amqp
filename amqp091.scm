@@ -19,8 +19,8 @@
   (define (encode-table props)
     (apply bitstring-append
            (map (lambda (prop)
-                  (let ((key (car prop))
-                        (val (cdr prop)))
+                  (let [(key (car prop))
+                        (val (cdr prop))]
                     (cond ((string? val) (bitconstruct ((string-length key) 8) (key bitstring) (#\S) ((string-length val) 32) (val bitstring))))))
                 props)))
 
@@ -83,11 +83,42 @@
                 (cons 'app-id (bitstring->string app-id)))))))
 
 (define (encode-headers-payload class-id weight body-size properties)
-  (bitconstruct
-   (class-id 16)
-   (weight 16)
-   (body-size 64)
-   (0 16)))
+  (let* [(nullsafe-length (lambda (s) (if s (string-length s) 0)))
+         (nullsafe-bitstring (lambda (s) (string->bitstring (if s s ""))))
+         (content-type (alist-ref 'content-type properties))
+         (content-encoding (alist-ref 'content-encoding properties))
+         (headers (alist-ref 'headers properties))
+         (headers-payload (if headers (encode-table headers) (string->bitstring "")))
+         (delivery-mode (alist-ref 'delivery-mode properties))
+         (priority (alist-ref 'priority properties))
+         (correlation-id (alist-ref 'correlation-id properties))
+         (reply-to (alist-ref 'reply-to properties))
+         (expiration (alist-ref 'expiration properties))
+         (message-id (alist-ref 'message-id properties))]
+    (bitconstruct
+     (class-id 16)
+     (weight 16)
+     (body-size 64)
+     ((bitwise-ior (if content-type (arithmetic-shift 1 15) 0)
+                   (if content-encoding (arithmetic-shift 1 14) 0)
+                   (if headers (arithmetic-shift 1 13) 0)
+                   (if delivery-mode (arithmetic-shift 1 12) 0)
+                   (if priority (arithmetic-shift 1 11) 0)
+                   (if correlation-id (arithmetic-shift 1 10) 0)
+                   (if reply-to (arithmetic-shift 1 9) 0)
+                   (if expiration (arithmetic-shift 1 8) 0)
+                   (if message-id (arithmetic-shift 1 7) 0)) 16)
+     ((nullsafe-length content-type) (if content-type 8 0)) ((nullsafe-bitstring content-type) bitstring)
+     ((nullsafe-length content-encoding) (if content-encoding 8 0)) ((nullsafe-bitstring content-encoding) bitstring)
+     ((if headers (/ (bitstring-length headers-payload) 8) 0) (if headers 32 0)) (headers-payload bitstring)
+     ((if delivery-mode delivery-mode 0) (if delivery-mode 8 0))
+     ((if priority priority 0) (if priority 8 0))
+     ((nullsafe-length correlation-id) (if correlation-id 8 0)) ((nullsafe-bitstring correlation-id) bitstring)
+     ((nullsafe-length reply-to) (if reply-to 8 0)) ((nullsafe-bitstring reply-to) bitstring)
+     ((nullsafe-length expiration) (if expiration 8 0)) ((nullsafe-bitstring expiration) bitstring)
+     ((nullsafe-length message-id) (if message-id 8 0)) ((nullsafe-bitstring message-id) bitstring)
+
+     )))
 
 (define (parse-frame str)
   (bitmatch
