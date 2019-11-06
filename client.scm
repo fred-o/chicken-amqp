@@ -200,6 +200,12 @@
         (loop)))
     (make-message (frame-properties mthd) (frame-properties hdrs) buf)))
 
+(define (publish-message channel exchange routing-key payload properties #!key (mandatory 0) (immediate 0))
+  (let [(frame-max (alist-ref 'frame-max (connection-parameters (channel-connection channel))))]
+    (send-frame channel 1 (make-basic-publish exchange routing-key mandatory immediate))
+    (send-frame channel 2 (encode-headers-payload 60 0 (/ (bitstring-length payload) 8) properties))
+    (send-frame channel 3 payload)))
+
 (define (channel-open conn)
   (let* [(id (next-channel-id conn))
          (ch (make-channel id

@@ -82,6 +82,13 @@
                 (cons 'user-id (bitstring->string user-id))
                 (cons 'app-id (bitstring->string app-id)))))))
 
+(define (encode-headers-payload class-id weight body-size properties)
+  (bitconstruct
+   (class-id 16)
+   (weight 16)
+   (body-size 64)
+   (0 16)))
+
 (define (parse-frame str)
   (bitmatch
    str
