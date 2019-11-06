@@ -223,6 +223,15 @@
     (expect-frame ch 20 11)
     ch))
 
+(define (exchange-declare channel exchange type #!key (passive 0) (durable 0) (no-wait 0))
+  (send-frame channel 1 (make-exchange-declare exchange type passive durable no-wait '()))
+  (expect-frame channel 40 11)
+  exchange)
+
+(define (exchange-delete channel exchange #!key (if-unused 0) (no-wait 0))
+  (send-frame channel 1 (make-exchange-delete exchange if-unused no-wait))
+  (expect-frame channel 40 21))
+
 (define (queue-declare channel queue #!key (passive 0) (durable 0) (exclusive 0) (auto-delete 0) (no-wait 0))
   (send-frame channel 1 (make-queue-declare queue passive durable exclusive auto-delete no-wait '()))
   (let [(reply (expect-frame channel 50 11))]
