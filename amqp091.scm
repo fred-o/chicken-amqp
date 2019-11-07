@@ -94,7 +94,11 @@
          (correlation-id (alist-ref 'correlation-id properties))
          (reply-to (alist-ref 'reply-to properties))
          (expiration (alist-ref 'expiration properties))
-         (message-id (alist-ref 'message-id properties))]
+         (message-id (alist-ref 'message-id properties))
+         (timestamp (alist-ref 'timestamp properties))
+         (type (alist-ref 'type properties))
+         (user-id (alist-ref 'user-id properties))
+         (app-id (alist-ref 'app-id properties))]
     (bitconstruct
      (class-id 16)
      (weight 16)
@@ -107,7 +111,11 @@
                    (if correlation-id (arithmetic-shift 1 10) 0)
                    (if reply-to (arithmetic-shift 1 9) 0)
                    (if expiration (arithmetic-shift 1 8) 0)
-                   (if message-id (arithmetic-shift 1 7) 0)) 16)
+                   (if message-id (arithmetic-shift 1 7) 0)
+                   (if timestamp (arithmetic-shift 1 6) 0)
+                   (if type (arithmetic-shift 1 5) 0)
+                   (if app-id (arithmetic-shift 1 4) 0)
+                   (if user-id (arithmetic-shift 1 3) 0)) 16)
      ((nullsafe-length content-type) (if content-type 8 0)) ((nullsafe-bitstring content-type) bitstring)
      ((nullsafe-length content-encoding) (if content-encoding 8 0)) ((nullsafe-bitstring content-encoding) bitstring)
      ((if headers (/ (bitstring-length headers-payload) 8) 0) (if headers 32 0)) (headers-payload bitstring)
@@ -117,8 +125,10 @@
      ((nullsafe-length reply-to) (if reply-to 8 0)) ((nullsafe-bitstring reply-to) bitstring)
      ((nullsafe-length expiration) (if expiration 8 0)) ((nullsafe-bitstring expiration) bitstring)
      ((nullsafe-length message-id) (if message-id 8 0)) ((nullsafe-bitstring message-id) bitstring)
-
-     )))
+     ((if timestamp timestamp 0) (if timestamp 64 0))
+     ((nullsafe-length type) (if type 8 0)) ((nullsafe-bitstring type) bitstring)
+     ((nullsafe-length user-id) (if user-id 8 0)) ((nullsafe-bitstring user-id) bitstring)
+     ((nullsafe-length app-id) (if app-id 8 0)) ((nullsafe-bitstring app-id) bitstring))))
 
 (define (parse-frame str)
   (bitmatch
