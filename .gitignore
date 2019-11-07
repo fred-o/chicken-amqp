@@ -1,2 +1,6 @@
 /client
 *.link
+*.o
+*.so
+*.sh
+*.import.scm

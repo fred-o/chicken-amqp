@@ -1,0 +1,11 @@
+((author "Fredrik Appelberg")
+ (synopsis "AMPQ")
+ (category networking)
+ (license "BSD")
+ (dependencies bitstring
+               mailbox
+               uuid-v4)
+ (components
+  (extension amqp091)
+  (extension amqp-core)
+  (extension amqp-primitives)))
