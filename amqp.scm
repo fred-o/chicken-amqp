@@ -20,8 +20,7 @@
     [(with-connection uri body ...)
      (parameterize [(amqp-connection (amqp-connect uri))]
        (with-channel
-        body ...)
-       (thread-join! (car (connection-threads (amqp-connection)))))]))
+        body ...))]))
 
 (define-syntax with-channel
   (syntax-rules ()
@@ -38,17 +37,17 @@
       (queue-bind (amqp-channel) q bound-to (or bound-with "#")))
     q))
 
-(define (consume queue fn)
+(define (consume queue fn #!key (detach #f))
   (with-channel
    (basic-qos (amqp-channel) 0 1 0)
    (basic-consume (amqp-channel) queue)
-   (thread-start!
-    (lambda ()
-      (letrec [(loop (lambda ()
-                       (let [(m (receive-message (amqp-channel)))]
-                         (fn (message-payload m) (message-properties m))
-                         (basic-ack (amqp-channel) (alist-ref 'delivery-tag (message-delivery m)))
-                         (loop))))]
-        (loop))))))
+   (letrec [(loop (lambda ()
+                    (let [(m (receive-message (amqp-channel)))]
+                      (fn (message-payload m) (message-properties m))
+                      (basic-ack (amqp-channel) (alist-ref 'delivery-tag (message-delivery m)))
+                      (loop))))]
+     (if detach
+         (thread-start! loop)
+         (loop)))))
 
 )
