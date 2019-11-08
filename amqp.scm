@@ -17,8 +17,8 @@
 
 (define-syntax with-connection
   (syntax-rules ()
-    [(with-connection url body ...)
-     (parameterize [(amqp-connection (amqp-connect "localhost" 5672))]
+    [(with-connection uri body ...)
+     (parameterize [(amqp-connection (amqp-connect uri))]
        (with-channel
         body ...)
        (thread-join! (car (connection-threads (amqp-connection)))))]))

@@ -12,6 +12,7 @@
         srfi-88
         mailbox
         bitstring
+        uri-generic
         amqp-091)
 
 (define *amqp-header*
@@ -120,7 +121,7 @@
                        (loop)))))
       (loop))))
 
-(define (handshake channel)
+(define (handshake channel username password vhost)
   (lambda ()
     (let* [(conn (channel-connection channel))
            (mb (dispatch-register! conn (lambda (type channel class-id method-id) (= class-id 10))))
@@ -133,7 +134,7 @@
                            (send-frame channel 1
                                       (make-connection-start-ok  '(("connection_name" . "my awesome client"))
                                                                  "PLAIN"
-                                                                 "\x00local\x00panda4ever"
+                                                                 (string-append "\x00" username "\x00" password)
                                                                  "en_US")))
                           ((equal? 30 method-id)
                            (let* ((args (frame-properties frm)))
@@ -143,7 +144,7 @@
                                                                  (alist-ref 'frame-max args)
                                                                  (alist-ref 'heartbeat args)))
                              (send-frame channel 1
-                                        (make-connection-open "/"))))
+                                        (make-connection-open vhost))))
                           ((equal? 41 method-id)
                            (set! done #t)))
                          (if done
@@ -163,16 +164,27 @@
                      (loop))))
       (loop))))
 
-(define (amqp-connect host port)
-  (define-values (i o) (tcp-connect host port))
-  (let* ((connection (make-connection i o #f '() '() (make-mutex) 1))
-         (default-channel (make-channel 0 (make-mailbox) (make-mailbox) connection))
-         (dispatcher-thread (thread-start! (dispatcher connection)))
-         (handshake-thread (thread-start! (make-thread (handshake default-channel)))))
-    ;; wait for handshake to finish
-    (thread-join! handshake-thread)
-    ;; start the heartbeat thread
-    (connection-threads-set! connection (list dispatcher-thread
-                                              (thread-start! (heartbeats default-channel))))
-    ;; ...annnd we are done!
-    connection)))
+(define (amqp-connect uri)
+  (let* [(uri (uri-reference uri))
+         (host (uri-host uri))
+         (port (or (uri-port uri) 5672))
+         (username (or (uri-username uri) ""))
+         (password (or (uri-password uri) ""))
+         (vhost (apply string-append
+                       (map (lambda (x) (if (symbol? x) (symbol->string x) x))
+                            (uri-path uri))))]
+    (unless (eq? 'amqp (uri-scheme uri)) (error "not an AMQP uri"))
+    (define-values (i o) (tcp-connect host port))
+    (let* ((connection (make-connection i o #f '() '() (make-mutex) 1))
+           (default-channel (make-channel 0 (make-mailbox) (make-mailbox) connection))
+           (dispatcher-thread (thread-start! (dispatcher connection)))
+           (handshake-thread (thread-start! (make-thread (handshake default-channel username password vhost)))))
+      ;; wait for handshake to finish
+      (thread-join! handshake-thread)
+      ;; start the heartbeat thread
+      (connection-threads-set! connection (list dispatcher-thread
+                                                (thread-start! (heartbeats default-channel))))
+      ;; ...annnd we are done!
+      connection)))
+
+)
