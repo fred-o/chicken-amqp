@@ -3,6 +3,7 @@
 (import scheme
         (chicken base)
         srfi-18
+        bitstring
         amqp-core
         amqp-primitives)
 
@@ -12,13 +13,17 @@
 (define serializers (make-parameter '()))
 (define deserializers (make-parameter '()))
 
-(define (register-serializer content-type fn)
+(define (register-serializer! content-type fn)
   (serializers (cons (cons content-type fn) (serializers))))
+(define (register-deserializer! content-type fn)
+  (deserializers (cons (cons content-type fn) (deserializers))))
 
 (define-syntax with-connection
   (syntax-rules ()
     [(with-connection uri body ...)
-     (parameterize [(amqp-connection (amqp-connect uri))]
+     (parameterize [(amqp-connection (amqp-connect uri))
+                    (serializers (serializers))
+                    (deserializers (deserializers))]
        (with-channel
         body ...))]))
 
@@ -42,9 +47,16 @@
    (basic-qos (amqp-channel) 0 1 0)
    (basic-consume (amqp-channel) queue)
    (letrec [(loop (lambda ()
-                    (let [(m (receive-message (amqp-channel)))]
-                      (fn (message-payload m) (message-properties m))
-                      (basic-ack (amqp-channel) (alist-ref 'delivery-tag (message-delivery m)))
+                    (let* [(msg (receive-message (amqp-channel)))
+                           (payload (bitstring->string (message-payload msg)))
+                           (properties (message-properties msg))
+                           (content-type (alist-ref 'content-type properties))
+                           (deserialize (alist-ref content-type (deserializers) equal?))]
+                      (fn (if deserialize
+                              (deserialize payload)
+                              payload)
+                          properties)
+                      (basic-ack (amqp-channel) (alist-ref 'delivery-tag (message-delivery msg)))
                       (loop))))]
      (if detach
          (thread-start! loop)
