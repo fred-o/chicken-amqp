@@ -5,7 +5,7 @@
         bitstring
         uuid-v4
         amqp-core
-        amqp091)
+        amqp-091)
 
 ;; AMQP primitives API
 

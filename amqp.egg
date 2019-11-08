@@ -6,6 +6,6 @@
                mailbox
                uuid-v4)
  (components
-  (extension amqp091)
+  (extension amqp-091)
   (extension amqp-core)
   (extension amqp-primitives)))

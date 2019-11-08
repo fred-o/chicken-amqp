@@ -1,4 +1,4 @@
-(module amqp091 *
+(module amqp-091 *
   (import scheme
           (chicken base)
           (chicken syntax)

@@ -11,7 +11,7 @@
         srfi-88
         mailbox
         bitstring
-        amqp091)
+        amqp-091)
 
 (define *amqp-header*
   (bitstring->string (bitconstruct
