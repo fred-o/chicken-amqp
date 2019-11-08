@@ -6,6 +6,7 @@
         (chicken irregex)
         (chicken format)
         (chicken bitwise)
+        (chicken process-context)
         srfi-1
         srfi-18
         srfi-88
@@ -35,6 +36,8 @@
 ;; (define-record message type channel class-id class method-id method arguments)
 
 ;; Fns
+(define is-debug (irregex-match? '(: "amqp") (or (get-environment-variable "DEBUG") "")))
+(define (print-debug #!rest args) (when is-debug (apply print args)))
 
 (define (next-channel-id connection)
   (let ((lock (connection-lock connection))
@@ -46,7 +49,7 @@
 
 ;; Send an AMQP frame over the wire, thread safe
 (define (send-frame channel type payload)
-  (print " <-- channel:" (channel-id channel) " type:" type " payload:" payload)
+  (print-debug " <-- channel:" (channel-id channel) " type:" type " payload:" payload)
   (write-string
    (bitstring->string (encode-frame type (channel-id channel) payload))
    #f
@@ -107,7 +110,7 @@
                                                            (frm (car message/rest)))
                                                       (set! buf (cdr message/rest))
                                                       (when frm
-                                                        (print "dispatching: " frm)
+                                                        (print-debug "dispatching: " frm)
                                                         (for-each (lambda (disp)
                                                                     (when (dispatch-pattern-match? (car disp) frm)
                                                                       (mailbox-send! (cdr disp) frm)))
