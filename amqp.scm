@@ -36,11 +36,24 @@
            [(amqp-channel (channel-open (amqp-connection)))]
          body ...))]))
 
+(define (exchange name type #!key (durable 0))
+  (let [(ex (exchange-declare (amqp-channel) name type durable: durable))]
+    ex))
+
+(define (passive-exchange name)
+  (exchange-declare (amqp-channel) name "" passive: 1))
+
 (define (queue name #!key (bound-to #f) (bound-with #f))
   (let [(q (queue-declare (amqp-channel) name auto-delete: (if (equal? "" name) 1 0)))]
     (when bound-to
       (queue-bind (amqp-channel) q bound-to (or bound-with "#")))
     q))
+
+(define (anonymous-queue #!key (bound-to #f) (bound-with #f))
+  (queue "" bound-to: bound-to bound-with: bound-with))
+
+(define (passive-queue name)
+  (queue-declare (amqp-channel) name passive: 1))
 
 (define (consume queue fn #!key (detach #f))
   (with-channel
@@ -62,4 +75,12 @@
          (thread-start! loop)
          (loop)))))
 
+(define (publish exchange routing-key payload properties)
+  (let* [(content-type (alist-ref 'content-type properties))
+         (serialize (alist-ref content-type (serializers) equal?))]
+    (publish-message (amqp-channel)
+                     exchange
+                     routing-key
+                     (->bitstring (if serialize (serialize payload) payload))
+                     properties)))
 )
