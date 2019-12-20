@@ -98,6 +98,7 @@
 
 (define (dispatcher connection)
   (lambda ()
+    (tcp-read-timeout #f)
     (letrec ((in (connection-in connection))
              (buf (->bitstring ""))
              (loop (lambda ()
