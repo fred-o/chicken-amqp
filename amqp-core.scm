@@ -1,191 +1,93 @@
+;; -*- geiser-scheme-implementation: 'chicken -*-
+
 (module amqp-core *
 
-(import scheme (chicken base) (chicken syntax)
-        (chicken tcp)
-        (chicken io)
-        (chicken irregex)
-        (chicken format)
-        (chicken bitwise)
-        (chicken process-context)
-        srfi-1
-        srfi-18
-        srfi-88
-        mailbox
-        bitstring
-        uri-generic
-        amqp-091)
+  (import scheme (chicken base) (chicken syntax)
+		  (chicken tcp)
+		  (chicken io)
+		  (chicken irregex)
+          (chicken process-context)
+		  amqp-091
+		  srfi-18
+		  mailbox
+		  bitstring
+		  uri-generic)
 
-(define *amqp-header*
-  (bitstring->string (bitconstruct
-                      ("AMQP" bitstring)
-                      (#d0 8)
-                      (0 8) (9 8) (1 8))))
+  (define is-debug (irregex-match? '(: "amqp") (or (get-environment-variable "DEBUG") "")))
+  
+  (define (print-debug #!rest args) (when is-debug (apply print args)))
 
-;; Data structures
+  (define-record connection in out thread lock mboxes)
 
-(define-record connection in out parameters threads dispatchers lock channel-id-seq)
+  (define-record channel connection id mbox)
 
-(define-record-printer (connection c out)
-  (fprintf out "#<connection parameters: ~S>"
-           (connection-parameters c)))
+  ;; Initialize a new channel object and register the mailbox with the
+  ;; connection. 
+  (define (new-channel conn)
+	(let* ((next-id (+ 1 (foldl max -1 (map car (connection-mboxes conn)))))
+		   (ch (make-channel conn next-id (make-mailbox))))
+	  (connection-mboxes-set! conn
+							  (cons (cons next-id (channel-mbox ch))
+									(connection-mboxes conn)))
+	  ch))
 
-(define-record channel id method-mailbox content-mailbox connection)
+  ;; Send an AMQP frame over the wire, thread safe and blocking
+  (define (write-frame ch frm)
+	(let ([conn (channel-connection ch)])
+	  (mutex-lock! (connection-lock conn))
+	  (write-string "" #f (connection-out conn))
+	  (mutex-unlock! (connection-lock conn))))
 
-(define-record-printer (channel ch out)
-  (fprintf out "#<channel: ~S>" (channel-id ch)))
+  ;; Read the next frame on this channel, thread safe and blocking.
+  (define (read-frame ch)
+	(let ((mbox (alist-ref (channel-id ch)
+						   (connection-mboxes (channel-connection ch)))))
+	  (mailbox-receive! mbox)))
 
-;; (define-record message type channel class-id class method-id method arguments)
 
-;; Fns
-(define is-debug (irregex-match? '(: "amqp") (or (get-environment-variable "DEBUG") "")))
-(define (print-debug #!rest args) (when is-debug (apply print args)))
+  (define (dispatcher connection)
+	(lambda ()
+      (tcp-read-timeout #f)
+      (letrec ((in (connection-in connection))
+               (buf (->bitstring ""))
+               (loop (lambda ()
+                       (let ((first-byte (read-string 1 in)))
+						 (if (eq? #!eof first-byte)
+							 (print "Eof")
+							 (begin
+                               (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
+                               (letrec [(parse-loop (lambda ()
+                                                      (let* ((message/rest (parse-frame buf))
+															 (frm (car message/rest)))
+														(set! buf (cdr message/rest))
+														(when frm
+                                                          (print-debug "dispatching: " frm)
+														  (let ((mbox (alist-ref (frame-channel frm)
+																				 (connection-mboxes connection))))
+															(if mbox (mailbox-send! mbox frm)
+																(error "no mailbox for channel")))
+                                                          (parse-loop)))))]
+								 (parse-loop))))
+						 (loop)))))
+		(loop))))
 
-(define (next-channel-id connection)
-  (let ((lock (connection-lock connection))
-        (id (connection-channel-id-seq connection)))
-    (mutex-lock! lock)
-    (connection-channel-id-seq-set! connection (+ 1 id))
-    (mutex-unlock! lock)
-    id))
+  
+  ;; Create a new AMQP connection with an initial channel with id 0
+  (define (amqp-connect url)
+	(let* [(uri (uri-reference url))
+           (host (uri-host uri))
+           (port (or (uri-port uri) 5672))
+           (username (or (uri-username uri) ""))
+           (password (or (uri-password uri) ""))
+           (vhost (apply string-append
+						 (map (lambda (x) (if (symbol? x) (symbol->string x) x))
+                              (uri-path uri))))]
+      (unless (eq? 'amqp (uri-scheme uri)) (error "not an AMQP uri"))
+      (define-values (i o) (tcp-connect host port))
+	  (let* ((conn (make-connection i o #f (make-mutex) '()))
+			 (ch (new-channel conn))
+			 (dt (make-thread (dispatcher conn))))
+		(connection-thread-set! conn dt)
+		conn)))
 
-;; Send an AMQP frame over the wire, thread safe
-(define (send-frame channel type payload)
-  (print-debug " <-- channel:" (channel-id channel) " type:" type " payload:" payload)
-  (write-string
-   (bitstring->string (encode-frame type (channel-id channel) payload))
-   #f
-   (connection-out (channel-connection channel))))
-
-;; Receive the next frame on the channel, blocking
-(define (receive-frame channel #!key (mailbox 'method))
-  (mailbox-receive! (cond ((eq? 'method mailbox)
-                           (channel-method-mailbox channel))
-                          ((eq? 'content mailbox)
-                           (channel-content-mailbox channel)))))
-
-(define (expect-frame channel class-id method-id #!key (mailbox 'method))
-  (let ((frm (receive-frame channel mailbox: mailbox)))
-    (if (and (equal? class-id (frame-class-id frm))
-             (equal? method-id (frame-method-id frm)))
-        frm
-        (raise (sprintf "(channel ~S): expected class ~S/method ~S, got ~S/~S"
-                        (channel-id channel)
-                        class-id method-id
-                        (frame-class-id frm) (frame-method-id frm))))))
-
-(define (dispatch-register! connection pattern)
-  (let [(lock (connection-lock connection))
-        (mb (make-mailbox))]
-    (mutex-lock! lock)
-    (connection-dispatchers-set! connection (cons (cons pattern mb)
-                                                  (connection-dispatchers connection)))
-    (mutex-unlock! lock)
-    mb))
-
-(define (dispatch-unregister! connection mailbox)
-  (let ((lock (connection-lock connection)))
-    (mutex-lock! lock)
-    (connection-dispatchers-set! connection
-                                 (filter (lambda (dispatch) (not (eq? mailbox (cdr dispatch))))
-                                         (connection-dispatchers connection)))
-    (mutex-unlock! lock)))
-
-(define (dispatch-pattern-match? pattern frm)
-  (pattern (frame-type frm)
-           (frame-channel frm)
-           (frame-class-id frm)
-           (frame-method-id frm)))
-
-(define (dispatcher connection)
-  (lambda ()
-    (tcp-read-timeout #f)
-    (letrec ((in (connection-in connection))
-             (buf (->bitstring ""))
-             (loop (lambda ()
-                     (let ((first-byte (read-string 1 in)))
-                       (if (eq? #!eof first-byte)
-                           (print "Eof")
-                           (begin
-                             (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
-                             (letrec [(parse-loop (lambda ()
-                                                    (let* ((message/rest (parse-frame buf))
-                                                           (frm (car message/rest)))
-                                                      (set! buf (cdr message/rest))
-                                                      (when frm
-                                                        (print-debug "dispatching: " frm)
-                                                        (for-each (lambda (disp)
-                                                                    (when (dispatch-pattern-match? (car disp) frm)
-                                                                      (mailbox-send! (cdr disp) frm)))
-                                                                  (connection-dispatchers connection))
-                                                        (parse-loop)))))]
-                               (parse-loop))))
-                       (loop)))))
-      (loop))))
-
-(define (handshake channel username password vhost)
-  (lambda ()
-    (let* [(conn (channel-connection channel))
-           (mb (dispatch-register! conn (lambda (type channel class-id method-id) (= class-id 10))))
-           (done #f)]
-      (letrec ((loop (lambda ()
-                       (let* ((frm (mailbox-receive! mb))
-                              (method-id (frame-method-id frm)))
-                         (cond
-                          ((equal? 10 method-id)
-                           (send-frame channel 1
-                                      (make-connection-start-ok  '(("connection_name" . "my awesome client"))
-                                                                 "PLAIN"
-                                                                 (string-append "\x00" username "\x00" password)
-                                                                 "en_US")))
-                          ((equal? 30 method-id)
-                           (let* ((args (frame-properties frm)))
-                             (connection-parameters-set! conn args)
-                             (send-frame channel 1
-                                        (make-connection-tune-ok (alist-ref 'channel-max args)
-                                                                 (alist-ref 'frame-max args)
-                                                                 (alist-ref 'heartbeat args)))
-                             (send-frame channel 1
-                                        (make-connection-open vhost))))
-                          ((equal? 41 method-id)
-                           (set! done #t)))
-                         (if done
-                             (dispatch-unregister! conn mb) ;; clean up 
-                             (loop))))))
-        ;; start 
-        (write-string *amqp-header* #f (connection-out conn))
-        (loop)))))
-
-(define (heartbeats channel)
-  (lambda ()
-    (letrec ((interval (/ (alist-ref 'heartbeat (connection-parameters (channel-connection channel))) 2))
-             (payload (string->bitstring ""))
-             (loop (lambda ()
-                     (send-frame channel 8 payload)
-                     (sleep interval)
-                     (loop))))
-      (loop))))
-
-(define (amqp-connect uri)
-  (let* [(uri (uri-reference uri))
-         (host (uri-host uri))
-         (port (or (uri-port uri) 5672))
-         (username (or (uri-username uri) ""))
-         (password (or (uri-password uri) ""))
-         (vhost (apply string-append
-                       (map (lambda (x) (if (symbol? x) (symbol->string x) x))
-                            (uri-path uri))))]
-    (unless (eq? 'amqp (uri-scheme uri)) (error "not an AMQP uri"))
-    (define-values (i o) (tcp-connect host port))
-    (let* ((connection (make-connection i o #f '() '() (make-mutex) 1))
-           (default-channel (make-channel 0 (make-mailbox) (make-mailbox) connection))
-           (dispatcher-thread (thread-start! (dispatcher connection)))
-           (handshake-thread (thread-start! (make-thread (handshake default-channel username password vhost)))))
-      ;; wait for handshake to finish
-      (thread-join! handshake-thread)
-      ;; start the heartbeat thread
-      (connection-threads-set! connection (list dispatcher-thread
-                                                (thread-start! (heartbeats default-channel))))
-      ;; ...annnd we are done!
-      connection)))
-
-)
+  )

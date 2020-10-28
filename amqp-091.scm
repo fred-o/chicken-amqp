@@ -1,3 +1,5 @@
+;; -*- geiser-scheme-implementation: 'chicken -*-
+
 (module amqp-091 *
   (import scheme
           (chicken base)
