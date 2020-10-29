@@ -24,7 +24,7 @@
   
   (define (print-debug #!rest args) (when is-debug (apply print args)))
 
-  (define-record connection in out thread lock mboxes parameters state)
+  (define-record connection in out threads lock mboxes parameters)
 
   (define-record channel connection id mbox)
 
@@ -40,6 +40,7 @@
 
   ;; Send an AMQP frame over the wire, thread safe and blocking
   (define (write-frame conn ch type payload)
+	(if (port-closed? (connection-out conn)) (error "connection closed"))
 	(let ([lock (connection-lock conn)])
 	  (print-debug " <-- channel:" channel " type:" type " payload:" payload)
 	  (mutex-lock! lock)
@@ -50,6 +51,7 @@
 
   ;; Read the next frame on this channel, thread safe and blocking.
   (define (read-frame conn ch)
+	(if (port-closed? (connection-in conn)) (error "connection closed"))
 	(let ((mbox (alist-ref ch (connection-mboxes conn))))
 	  (mailbox-receive! mbox)))
 
@@ -92,6 +94,16 @@
 							(loop)))))
 		   (loop))))))
 
+  (define (heartbeats conn)
+	(lambda ()
+      (letrec ((interval (/ (alist-ref 'heartbeat (connection-parameters conn)) 2))
+               (payload (string->bitstring ""))
+               (loop (lambda ()
+                       (write-frame conn 0 8 payload)
+                       (sleep interval)
+                       (loop))))
+		(loop))))
+  
 	;; Create a new AMQP connection with an initial channel with id 0
 	(define (amqp-connect url)
 	  (let* [(uri (uri-reference url))
@@ -104,10 +116,9 @@
 								(uri-path uri))))]
 		(unless (eq? 'amqp (uri-scheme uri)) (error "not an AMQP uri"))
 		(let-values (((i o) (tcp-connect host port)))
-		  (let* ((conn (make-connection i o #f (make-mutex) '() '() #:new))
+		  (let* ((conn (make-connection i o '() (make-mutex) '() '()))
 				 (ch (new-channel conn))
 				 (dt (make-thread (dispatcher conn))))
-			(connection-thread-set! conn dt)
 			(thread-start! dt)
 			;; Initiate handshake
 			(write-string *amqp-header* #f o)
@@ -117,13 +128,10 @@
                            (make-connection-start-ok  '(("connection_name" . "Chicken AMQP"))
                                                       "PLAIN"
                                                       (string-append "\x00" username "\x00" password)
-                                                      "en_US"))
-
-			  (print frm))
+                                                      "en_US")))
 			;; Negotiation
 			(let* ((frm (expect-frame conn 0 10 30))
 				   (args (frame-properties frm)))
-			  (print frm)
               (connection-parameters-set! conn args)
               (write-frame conn 0 1 (make-connection-tune-ok (alist-ref 'channel-max args)
 															 (alist-ref 'frame-max args)
@@ -131,18 +139,24 @@
               (write-frame conn 0 1 (make-connection-open vhost)))
 			;; Connection is open
 			(expect-frame conn 0 10 41)
-			(connection-state-set! conn #:open)
+			;; Start a heartbeat thread
+			(let ((hb (make-thread (heartbeats conn))))
+			  (thread-start! hb)
+			  (connection-threads-set! conn (list dt hb)))
 			conn))))
 
 	(define (amqp-disconnect conn)
 	  (let ((lock (connection-lock conn)))
 		(mutex-lock! lock)
+		(print (connection-threads conn))
+		(map thread-terminate! (connection-threads conn))
 		(close-output-port (connection-out conn))
 		(close-input-port (connection-in conn))
 		(mutex-unlock! lock)))
-	
 	)
 
-(import amqp-core)
-(print (connection-parameters (amqp-connect "amqp://local:panda4ever@localhost/")))
-
+(import amqp-core amqp-091)
+(let ((c (amqp-connect "amqp://local:panda4ever@localhost/")))
+  (sleep 1)
+  (print 'done)
+  (amqp-disconnect c))
