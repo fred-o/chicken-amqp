@@ -25,7 +25,7 @@
   
   (define (print-debug #!rest args) (when amqp-debug (apply print args)))
 
-  (define-record connection in out threads lock mboxes parameters)
+  (define-record connection in out lock mboxes parameters)
 
   (define-record channel connection id mbox)
 
@@ -137,7 +137,7 @@
 							  (uri-path uri))))]
 	  (unless (eq? 'amqp (uri-scheme uri)) (error "not an AMQP uri"))
 	  (let-values (((i o) (tcp-connect host port)))
-		(let* ((conn (make-connection i o '() (make-mutex) '() '()))
+		(let* ((conn (make-connection i o (make-mutex) '() '()))
 			   (ch (new-channel conn))
 			   (dt (make-thread (dispatcher conn) "dispatcher")))
 		  (thread-start! dt)
@@ -162,8 +162,7 @@
 		  (expect-frame conn 0 10 41)
 		  ;; Start a heartbeat thread
 		  (let ((hb (make-thread (heartbeats conn) "heartbeats")))
-			(thread-start! hb)
-			(connection-threads-set! conn (list dt hb)))
+			(thread-start! hb))
 		  conn))))
 
   (define (amqp-disconnect conn)
@@ -171,5 +170,4 @@
 	  (mutex-lock! lock)
 	  (close-output-port (connection-out conn))
 	  (close-input-port (connection-in conn))
-	  (mutex-unlock! lock)))
-  )
+	  (mutex-unlock! lock))))
