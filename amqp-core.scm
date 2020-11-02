@@ -55,7 +55,6 @@
 
   ;; Read the next frame on this channel, thread safe and blocking.
   (define (read-frame conn ch)
-	(if (port-closed? (connection-in conn)) (error "connection closed"))
 	(let ((mbox (alist-ref ch (connection-mboxes conn))))
 	  (mailbox-receive! mbox)))
 
@@ -63,24 +62,28 @@
   ;; expected class and method
   (define (expect-frame conn ch class-id method-id)
 	(let ((frm (read-frame conn ch)))
-	  (if (and (= (frame-class-id frm) class-id)
-			   (= (frame-method-id frm) method-id))
-		  frm
-		  (if (and (= 20 (frame-class-id frm))
-				   (= 40 (frame-method-id frm)))
-			  (error "channel closed")
-			  (error (format "expected class: ~a (got ~a), method: ~a (got ~a)"
-							 class-id (frame-class-id frm)
-							 method-id (frame-method-id frm)))))))
+	  (cond
+	   ((eq? frm #!eof) (error "connection closed"))
+	   ((and (= (frame-class-id frm) class-id)
+			 (= (frame-method-id frm) method-id))
+		frm)
+	   ((and (= 20 (frame-class-id frm))
+			 (= 40 (frame-method-id frm)))
+		(error "channel closed"))
+	   (else 
+		(error (format "expected class: ~a (got ~a), method: ~a (got ~a)"
+					   class-id (frame-class-id frm)
+					   method-id (frame-method-id frm)))))))
   
   (define (dispatcher connection)
 	(lambda ()
-	  (call/cc
-	   (lambda (break)
-		 (let ((lock (connection-lock connection))
-			   (in (connection-in connection))
-			   (buf (->bitstring "")))
+	  (let ((lock (connection-lock connection))
+			(in (connection-in connection))
+			(buf (->bitstring "")))
+		(call/cc
+		 (lambda (break)
 		   (let loop ()
+			 (handle-exceptions exp (break exp)
 			   (let ((first-byte (read-string 1 in)))
 				 (if (eq? #!eof first-byte)
 					 (break #!eof)
@@ -102,18 +105,25 @@
 							 (if (and (= 10 (frame-class-id frm))
 									  (= 50 (frame-method-id frm)))
 								 (break 'close))
-							 (parse-loop))))))
-				 (loop))))))
-	  (print-debug "dispatcher closing")))
+							 (parse-loop)))))))
+				 (loop)))))
+		(print-debug "dispatcher closing")
+		;; Time to poison the well
+		(mutex-lock! lock)
+		(for-each (lambda (mbox) (mailbox-send! mbox #!eof))
+				  (map cdr (connection-mboxes connection)))
+		(mutex-unlock! lock))))
 
   (define (heartbeats conn)
 	(lambda ()
       (let ((interval (/ (alist-ref 'heartbeat (connection-parameters conn)) 10))
             (payload (string->bitstring "")))
-		(let loop ()
-          (write-frame conn 0 8 payload)
-          (sleep interval)
-          (loop)))))
+		(handle-exceptions exp (lambda i i)
+		  (let loop ()
+			(write-frame conn 0 8 payload)
+			(sleep interval)
+			(loop)))
+		(print-debug "heartbeats closing"))))
 
   ;; Create a new AMQP connection with an initial channel with id 0
   (define (amqp-connect url)
