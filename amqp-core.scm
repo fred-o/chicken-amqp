@@ -32,11 +32,14 @@
   ;; Initialize a new channel object and register the mailbox with the
   ;; connection. 
   (define (new-channel conn)
-	(let* ((channel-id (+ 1 (foldl max -1 (map car (connection-mboxes conn))))))
-	  (connection-mboxes-set! conn
-							  (cons (cons channel-id (make-mailbox))
-									(connection-mboxes conn)))
-	  channel-id))
+	(let ((lock (connection-lock conn)))
+	  (mutex-lock! lock)
+	  (let* ((channel-id (+ 1 (foldl max -1 (map car (connection-mboxes conn))))))
+		(connection-mboxes-set! conn
+								(cons (cons channel-id (make-mailbox))
+									  (connection-mboxes conn)))
+		(mutex-unlock! lock)
+		channel-id)))
 
   ;; Send an AMQP frame over the wire, thread safe and blocking
   (define (write-frame conn ch type payload)
@@ -74,7 +77,8 @@
 	(lambda ()
 	  (call/cc
 	   (lambda (break)
-		 (let ((in (connection-in connection))
+		 (let ((lock (connection-lock connection))
+			   (in (connection-in connection))
 			   (buf (->bitstring "")))
 		   (let loop ()
 			   (let ((first-byte (read-string 1 in)))
@@ -88,8 +92,10 @@
 						   (set! buf (cdr message/rest))
 						   (when frm
 							 (print-debug " --> " frm)
+							 (mutex-lock! lock)
 							 (let ((mbox (alist-ref (frame-channel frm)
 													(connection-mboxes connection))))
+							   (mutex-unlock! lock)
 							   (if mbox (mailbox-send! mbox frm)
 								   (error "no mailbox for channel")))
 							 ;; Check for connection close
