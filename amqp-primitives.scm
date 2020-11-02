@@ -36,6 +36,10 @@
 	  (expect-frame connection channel 20 11)
 	  connection channel))
 
+  (define (amqp-channel-close connection channel reply-code reply-text)
+	(write-frame connection channel 1 (make-channel-close reply-code reply-text 20 40))
+	(expect-frame connection channel 20 41))
+  
   (define (amqp-exchange-declare connection channel exchange type #!key (passive 0) (durable 0) (no-wait 0))
 	(write-frame connection channel 1 (make-exchange-declare exchange type passive durable no-wait '()))
 	(unless (= no-wait 1) (expect-frame connection channel 40 11))
@@ -57,7 +61,7 @@
 
   (define (amqp-basic-qos connection channel prefetch-size prefetch-count global)
 	(write-frame connection channel 1 (make-basic-qos prefetch-size prefetch-count global))
-	(unless (= no-wait 1) (expect-frame connection channel 60 11)))
+	(expect-frame connection channel 60 11))
 
   (define (amqp-basic-consume connection channel queue  #!key (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0))
 	(let [(tag (make-uuid-v4))]
