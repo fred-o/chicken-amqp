@@ -95,12 +95,15 @@
 																					  (connection-mboxes connection))))
 																 (if mbox (mailbox-send! mbox frm)
 																	 (error "no mailbox for channel")))
+															   ;; Check for connection close
+															   (if (and (= 10 (frame-class-id frm))
+																		(= 50 (frame-method-id frm)))
+																   (break '()))
 															   (parse-loop)))))]
 									  (parse-loop))))
 							  (loop))))))
 		   (loop))))
-	  (print 'closing)
-	  (amqp-disconnect connection)))
+	  (print-debug "dispatcher closing")))
 
   (define (heartbeats conn)
 	(lambda ()
