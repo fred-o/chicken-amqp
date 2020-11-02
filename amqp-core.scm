@@ -21,9 +21,9 @@
 						(#d0 8)
 						(0 8) (9 8) (1 8))))
 
-  (define is-debug (irregex-match? '(: "amqp") (or (get-environment-variable "DEBUG") "")))
+  (define amqp-debug (irregex-match? '(: "amqp") (or (get-environment-variable "DEBUG") "")))
   
-  (define (print-debug #!rest args) (when is-debug (apply print args)))
+  (define (print-debug #!rest args) (when amqp-debug (apply print args)))
 
   (define-record connection in out threads lock mboxes parameters)
 
