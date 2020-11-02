@@ -8,12 +8,13 @@
 		  (chicken irregex)
           (chicken process-context)
 		  (chicken format)
+		  (chicken condition)
 		  amqp-091
 		  srfi-18
 		  mailbox
 		  bitstring
 		  uri-generic)
-
+  
   (define *amqp-header*
 	(bitstring->string (bitconstruct
 						("AMQP" bitstring)
@@ -31,20 +32,20 @@
   ;; Initialize a new channel object and register the mailbox with the
   ;; connection. 
   (define (new-channel conn)
-	(let* ((next-id (+ 1 (foldl max -1 (map car (connection-mboxes conn)))))
-		   (ch (make-channel conn next-id (make-mailbox))))
+	(let* ((channel-id (+ 1 (foldl max -1 (map car (connection-mboxes conn))))))
 	  (connection-mboxes-set! conn
-							  (cons (cons next-id (channel-mbox ch))
+							  (cons (cons channel-id (make-mailbox))
 									(connection-mboxes conn)))
-	  ch))
+	  channel-id))
 
   ;; Send an AMQP frame over the wire, thread safe and blocking
   (define (write-frame conn ch type payload)
 	(if (port-closed? (connection-out conn)) (error "connection closed"))
-	(let ([lock (connection-lock conn)])
-	  (print-debug " <-- channel:" channel " type:" type " payload:" payload)
+	(let ([lock (connection-lock conn)]
+		  [frm (encode-frame type ch payload)])
+	  (print-debug " <-- channel:" ch " type:" type " payload:" payload)
 	  (mutex-lock! lock)
-	  (write-string (bitstring->string (encode-frame type ch payload))
+	  (write-string (bitstring->string frm)
 					#f
 					(connection-out conn))
 	  (mutex-unlock! lock)))
@@ -62,37 +63,44 @@
 	  (if (and (= (frame-class-id frm) class-id)
 			   (= (frame-method-id frm) method-id))
 		  frm
-		  (error (format "expected class: ~a (got ~a), method: ~a (got ~a)"
-						 class-id (frame-class-id frm)
-						 method-id (frame-method-id frm))))))
+		  (if (and (= 20 (frame-class-id frm))
+				   (= 40 (frame-method-id frm)))
+			  (error "channel closed")
+			  (error (format "expected class: ~a (got ~a), method: ~a (got ~a)"
+							 class-id (frame-class-id frm)
+							 method-id (frame-method-id frm)))))))
   
   (define (dispatcher connection)
 	(lambda ()
-      (tcp-read-timeout #f)
 	  (call/cc
 	   (lambda (break)
 		 (letrec ((in (connection-in connection))
 				  (buf (->bitstring ""))
 				  (loop (lambda ()
-						  (let ((first-byte (read-string 1 in)))
-							(if (eq? #!eof first-byte)
-								(break)
-								(begin
-								  (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
-								  (letrec [(parse-loop (lambda ()
-														 (let* ((message/rest (parse-frame buf))
-																(frm (car message/rest)))
-														   (set! buf (cdr message/rest))
-														   (when frm
-															 (print-debug "dispatching: " frm)
-															 (let ((mbox (alist-ref (frame-channel frm)
-																					(connection-mboxes connection))))
-															   (if mbox (mailbox-send! mbox frm)
-																   (error "no mailbox for channel")))
-															 (parse-loop)))))]
-									(parse-loop))))
-							(loop)))))
-		   (loop))))))
+						  (with-exception-handler (lambda (e)
+													(print e)
+													(break e))
+							(let ((first-byte (read-string 1 in)))
+							  (if (eq? #!eof first-byte)
+								  (break #!eof)
+								  (begin
+									(bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
+									(letrec [(parse-loop (lambda ()
+														   (let* ((message/rest (parse-frame buf))
+																  (frm (car message/rest)))
+															 (set! buf (cdr message/rest))
+															 (when frm
+															   (print-debug " --> " frm)
+															   (let ((mbox (alist-ref (frame-channel frm)
+																					  (connection-mboxes connection))))
+																 (if mbox (mailbox-send! mbox frm)
+																	 (error "no mailbox for channel")))
+															   (parse-loop)))))]
+									  (parse-loop))))
+							  (loop))))))
+		   (loop))))
+	  (print 'closing)
+	  (amqp-disconnect connection)))
 
   (define (heartbeats conn)
 	(lambda ()
@@ -104,59 +112,51 @@
                        (loop))))
 		(loop))))
   
-	;; Create a new AMQP connection with an initial channel with id 0
-	(define (amqp-connect url)
-	  (let* [(uri (uri-reference url))
-			 (host (uri-host uri))
-			 (port (or (uri-port uri) 5672))
-			 (username (or (uri-username uri) ""))
-			 (password (or (uri-password uri) ""))
-			 (vhost (apply string-append
-						   (map (lambda (x) (if (symbol? x) (symbol->string x) x))
-								(uri-path uri))))]
-		(unless (eq? 'amqp (uri-scheme uri)) (error "not an AMQP uri"))
-		(let-values (((i o) (tcp-connect host port)))
-		  (let* ((conn (make-connection i o '() (make-mutex) '() '()))
-				 (ch (new-channel conn))
-				 (dt (make-thread (dispatcher conn))))
-			(thread-start! dt)
-			;; Initiate handshake
-			(write-string *amqp-header* #f o)
-			;; Authorization
-			(let ((frm (expect-frame conn 0 10 10)))
-			  (write-frame conn 0 1
-                           (make-connection-start-ok  '(("connection_name" . "Chicken AMQP"))
-                                                      "PLAIN"
-                                                      (string-append "\x00" username "\x00" password)
-                                                      "en_US")))
-			;; Negotiation
-			(let* ((frm (expect-frame conn 0 10 30))
-				   (args (frame-properties frm)))
-              (connection-parameters-set! conn args)
-              (write-frame conn 0 1 (make-connection-tune-ok (alist-ref 'channel-max args)
-															 (alist-ref 'frame-max args)
-															 (alist-ref 'heartbeat args)))
-              (write-frame conn 0 1 (make-connection-open vhost)))
-			;; Connection is open
-			(expect-frame conn 0 10 41)
-			;; Start a heartbeat thread
-			(let ((hb (make-thread (heartbeats conn))))
-			  (thread-start! hb)
-			  (connection-threads-set! conn (list dt hb)))
-			conn))))
+  ;; Create a new AMQP connection with an initial channel with id 0
+  (define (amqp-connect url)
+	(let* [(uri (uri-reference url))
+		   (host (uri-host uri))
+		   (port (or (uri-port uri) 5672))
+		   (username (or (uri-username uri) ""))
+		   (password (or (uri-password uri) ""))
+		   (vhost (apply string-append
+						 (map (lambda (x) (if (symbol? x) (symbol->string x) x))
+							  (uri-path uri))))]
+	  (unless (eq? 'amqp (uri-scheme uri)) (error "not an AMQP uri"))
+	  (let-values (((i o) (tcp-connect host port)))
+		(let* ((conn (make-connection i o '() (make-mutex) '() '()))
+			   (ch (new-channel conn))
+			   (dt (make-thread (dispatcher conn) "dispatcher")))
+		  (thread-start! dt)
+		  ;; Initiate handshake
+		  (write-string *amqp-header* #f o)
+		  ;; Authorization
+		  (let ((frm (expect-frame conn 0 10 10)))
+			(write-frame conn 0 1
+                         (make-connection-start-ok  '(("connection_name" . "Chicken AMQP"))
+                                                    "PLAIN"
+                                                    (string-append "\x00" username "\x00" password)
+                                                    "en_US")))
+		  ;; Negotiation
+		  (let* ((frm (expect-frame conn 0 10 30))
+				 (args (frame-properties frm)))
+            (connection-parameters-set! conn args)
+            (write-frame conn 0 1 (make-connection-tune-ok (alist-ref 'channel-max args)
+														   (alist-ref 'frame-max args)
+														   (alist-ref 'heartbeat args)))
+            (write-frame conn 0 1 (make-connection-open vhost)))
+		  ;; Connection is open
+		  (expect-frame conn 0 10 41)
+		  ;; Start a heartbeat thread
+		  (let ((hb (make-thread (heartbeats conn) "heartbeats")))
+			(thread-start! hb)
+			(connection-threads-set! conn (list dt hb)))
+		  conn))))
 
-	(define (amqp-disconnect conn)
-	  (let ((lock (connection-lock conn)))
-		(mutex-lock! lock)
-		(print (connection-threads conn))
-		(map thread-terminate! (connection-threads conn))
-		(close-output-port (connection-out conn))
-		(close-input-port (connection-in conn))
-		(mutex-unlock! lock)))
-	)
-
-(import amqp-core amqp-091)
-(let ((c (amqp-connect "amqp://local:panda4ever@localhost/")))
-  (sleep 1)
-  (print 'done)
-  (amqp-disconnect c))
+  (define (amqp-disconnect conn)
+	(let ((lock (connection-lock conn)))
+	  (mutex-lock! lock)
+	  (close-output-port (connection-out conn))
+	  (close-input-port (connection-in conn))
+	  (mutex-unlock! lock)))
+  )
