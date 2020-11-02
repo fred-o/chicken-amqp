@@ -38,30 +38,32 @@
 
   (define (amqp-exchange-declare connection channel exchange type #!key (passive 0) (durable 0) (no-wait 0))
 	(write-frame connection channel 1 (make-exchange-declare exchange type passive durable no-wait '()))
-	(expect-frame connection channel 40 11)
+	(unless (= no-wait 1) (expect-frame connection channel 40 11))
 	exchange)
 
   (define (amqp-exchange-delete connection channel exchange #!key (if-unused 0) (no-wait 0))
 	(write-frame connection channel 1 (make-exchange-delete exchange if-unused no-wait))
-	(expect-frame connection channel 40 21))
+	(unless (= no-wait 1) (expect-frame connection channel 40 21)))
 
   (define (amqp-queue-declare connection channel queue #!key (passive 0) (durable 0) (exclusive 0) (auto-delete 0) (no-wait 0))
 	(write-frame connection channel 1 (make-queue-declare queue passive durable exclusive auto-delete no-wait '()))
-	(let [(reply (expect-frame connection channel 50 11))]
-      (alist-ref 'queue (frame-properties reply))))
+	(unless (= no-wait 1)
+	  (let [(reply (expect-frame connection channel 50 11))]
+		(alist-ref 'queue (frame-properties reply)))))
 
   (define (amqp-queue-bind connection channel queue exchange routing-key #!key (no-wait 0))
 	(write-frame connection channel 1 (make-queue-bind queue exchange routing-key no-wait '()))
-	(expect-frame connection channel 50 21))
+	(unless (= no-wait 1) (expect-frame connection channel 50 21)))
 
   (define (amqp-basic-qos connection channel prefetch-size prefetch-count global)
 	(write-frame connection channel 1 (make-basic-qos prefetch-size prefetch-count global))
-	(expect-frame connection channel 60 11))
+	(unless (= no-wait 1) (expect-frame connection channel 60 11)))
 
   (define (amqp-basic-consume connection channel queue  #!key (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0))
 	(let [(tag (make-uuid-v4))]
       (write-frame connection channel 1 (make-basic-consume queue tag no-local no-ack exclusive no-wait '()))
-      (expect-frame connection channel 60 21)))
+      (unless (= no-wait 1) (expect-frame connection channel 60 21))
+	  tag))
 
   (define (amqp-basic-ack connection channel delivery-tag #!key (multiple 0))
 	(write-frame connection channel 1 (make-basic-ack delivery-tag multiple)))

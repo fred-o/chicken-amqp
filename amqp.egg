@@ -8,4 +8,5 @@
  (components
   (extension amqp-091)
   (extension amqp-core)
-  (extension amqp-primitives)))
+  (extension amqp-primitives)
+  (extension amqp)))
