@@ -55,21 +55,28 @@
 
   ;; Read the next frame on this channel, thread safe and blocking.
   (define (read-frame conn ch)
-	(let ((mbox (alist-ref ch (connection-mboxes conn))))
-	  (mailbox-receive! mbox)))
+	(let* ((mbox (alist-ref ch (connection-mboxes conn)))
+		   (frm (mailbox-receive! mbox)))
+	  (cond
+	   ((condition? frm)
+		(mailbox-push-back! mbox frm)
+		(raise frm))
+	   (else frm))))
 
   ;; Like read-frame, but throw an error if the frame is not of the
   ;; expected class and method
   (define (expect-frame conn ch class-id method-id)
-	(let ((frm (read-frame conn ch)))
+	(let* ((frm (read-frame conn ch)))
 	  (cond
-	   ((eq? frm #!eof) (error "connection closed"))
 	   ((and (= (frame-class-id frm) class-id)
 			 (= (frame-method-id frm) method-id))
 		frm)
 	   ((and (= 20 (frame-class-id frm))
 			 (= 40 (frame-method-id frm)))
-		(error "channel closed"))
+		(let ((props (frame-properties frm)))
+		  (raise (condition '(exn message "channel closed")
+							`(amqp reply-text ,(alist-ref 'reply-text props)
+								   reply-code ,(alist-ref 'reply-code props))))))
 	   (else 
 		(error (format "expected class: ~a (got ~a), method: ~a (got ~a)"
 					   class-id (frame-class-id frm)
@@ -77,40 +84,44 @@
   
   (define (dispatcher connection)
 	(lambda ()
-	  (let ((lock (connection-lock connection))
+	  (let* ((lock (connection-lock connection))
 			(in (connection-in connection))
-			(buf (->bitstring "")))
-		(call/cc
-		 (lambda (break)
-		   (let loop ()
-			 (handle-exceptions exp (break exp)
-			   (let ((first-byte (read-string 1 in)))
-				 (if (eq? #!eof first-byte)
-					 (break #!eof)
-					 (begin
-					   (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
-					   (let parse-loop ()
-						 (let* ((message/rest (parse-frame buf))
-								(frm (car message/rest)))
-						   (set! buf (cdr message/rest))
-						   (when frm
-							 (print-debug " --> " frm)
-							 (mutex-lock! lock)
-							 (let ((mbox (alist-ref (frame-channel frm)
-													(connection-mboxes connection))))
-							   (mutex-unlock! lock)
-							   (if mbox (mailbox-send! mbox frm)
-								   (error "no mailbox for channel")))
-							 ;; Check for connection close
-							 (if (and (= 10 (frame-class-id frm))
-									  (= 50 (frame-method-id frm)))
-								 (break 'close))
-							 (parse-loop)))))))
-				 (loop)))))
+			(buf (->bitstring ""))
+			(result (call/cc
+					 (lambda (break)
+					   (let loop ()
+						 (handle-exceptions exp (break exp)
+						   (let ((first-byte (read-string 1 in)))
+							 (if (eq? #!eof first-byte)
+								 (break (condition '(exn message "connection closed unexpectedly")))
+								 (begin
+								   (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
+								   (let parse-loop ()
+									 (let* ((message/rest (parse-frame buf))
+											(frm (car message/rest)))
+									   (set! buf (cdr message/rest))
+									   (when frm
+										 (print-debug " --> " frm)
+										 (mutex-lock! lock)
+										 (let ((mbox (alist-ref (frame-channel frm)
+																(connection-mboxes connection))))
+										   (mutex-unlock! lock)
+										   (if mbox
+											   (mailbox-send! mbox frm)
+											   (error "no mailbox for channel")))
+										 ;; Check for connection close
+										 (if (and (= 10 (frame-class-id frm))
+												  (= 50 (frame-method-id frm)))
+											 (let ((props (frame-properties frm)))
+											   (break (condition '(exn message "connection closed")
+																 `(amqp reply-text ,(alist-ref 'reply-text props)
+																		reply-code ,(alist-ref 'reply-code props))))))
+										 (parse-loop)))))))
+						   (loop)))))))
 		(print-debug "dispatcher closing")
 		;; Time to poison the well
 		(mutex-lock! lock)
-		(for-each (lambda (mbox) (mailbox-send! mbox #!eof))
+		(for-each (lambda (mbox) (mailbox-send! mbox result))
 				  (map cdr (connection-mboxes connection)))
 		(mutex-unlock! lock))))
 
