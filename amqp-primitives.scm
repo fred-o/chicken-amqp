@@ -25,7 +25,7 @@
       (make-amqp-message (frame-properties mthd) (frame-properties hdrs) (bitstring->u8vector buf))))
 
   (define (amqp-publish-message connection channel exchange routing-key payload properties #!key (mandatory 0) (immediate 0))
-    (let [(frame-max (alist-ref 'frame-max (connection-parameters (channel-connection channel))))]
+    (let [(frame-max (alist-ref 'frame-max (connection-parameters connection)))]
       (write-frame connection channel 1 (make-basic-publish exchange routing-key mandatory immediate))
       (write-frame connection channel 2 (encode-headers-payload 60 0 (/ (bitstring-length payload) 8) properties))
       (write-frame connection channel 3 payload)))
