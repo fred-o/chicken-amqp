@@ -27,8 +27,6 @@
 
   (define-record connection in out lock mboxes parameters)
 
-  (define-record channel connection id mbox)
-
   ;; Initialize a new channel object and register the mailbox with the
   ;; connection. 
   (define (new-channel conn)
