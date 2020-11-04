@@ -129,7 +129,7 @@
 
   (define (heartbeats conn)
 	(lambda ()
-      (let ((interval (/ (alist-ref 'heartbeat (connection-parameters conn)) 10))
+      (let ((interval (/ (alist-ref 'heartbeat (connection-parameters conn)) 2))
             (payload (string->bitstring "")))
 		(handle-exceptions exp (lambda i i)
 		  (let loop ()
