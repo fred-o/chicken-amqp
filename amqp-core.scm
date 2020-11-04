@@ -53,13 +53,17 @@
 
   ;; Read the next frame on this channel, thread safe and blocking.
   (define (read-frame conn ch)
-	(let* ((mbox (alist-ref ch (connection-mboxes conn)))
-		   (frm (mailbox-receive! mbox)))
-	  (cond
-	   ((condition? frm)
-		(mailbox-push-back! mbox frm)
-		(raise frm))
-	   (else frm))))
+	(let ([lock (connection-lock conn)])
+	  (mutex-lock! lock)
+	  (let ((mbox (alist-ref ch (connection-mboxes conn))))
+		(mutex-unlock! lock)
+		(unless mbox (raise (condition `(exn message ,(format "unknown channel: ~a" ch)))))
+		(let ((frm (mailbox-receive! mbox)))
+		  (cond
+		   ((condition? frm)
+			(mailbox-push-back! mbox frm)
+			(raise frm))
+		   (else frm))))))
 
   ;; Like read-frame, but throw an error if the frame is not of the
   ;; expected class and method
