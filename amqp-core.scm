@@ -27,48 +27,52 @@
 
   (define-record connection in out lock mboxes parameters)
 
+  (define-record channel connection mbox id)
+
   ;; Initialize a new channel object and register the mailbox with the
   ;; connection. 
   (define (new-channel conn)
 	(let ((lock (connection-lock conn)))
 	  (mutex-lock! lock)
-	  (let* ((channel-id (+ 1 (foldl max -1 (map car (connection-mboxes conn))))))
+	  (let* [(channel-id (+ 1 (foldl max -1 (map car (connection-mboxes conn)))))
+			 (mbox (make-mailbox))
+			 (channel (make-channel conn mbox channel-id))]
 		(connection-mboxes-set! conn
-								(cons (cons channel-id (make-mailbox))
+								(cons (cons channel-id mbox)
 									  (connection-mboxes conn)))
 		(mutex-unlock! lock)
-		channel-id)))
+		channel)))
 
   ;; Send an AMQP frame over the wire, thread safe and blocking
-  (define (write-frame conn ch type payload)
-	(if (port-closed? (connection-out conn)) (error "connection closed"))
-	(let ([lock (connection-lock conn)]
-		  [frm (encode-frame type ch payload)])
-	  (print-debug " <-- channel:" ch " type:" type " payload:" payload)
-	  (mutex-lock! lock)
-	  (write-string (bitstring->string frm)
-					#f
-					(connection-out conn))
-	  (mutex-unlock! lock)))
+  (define (write-frame channel type payload)
+	(let [(conn (channel-connection channel))
+		  (ch (channel-id channel))]
+	  (if (port-closed? (connection-out conn)) (error "connection closed"))
+	  (let ([lock (connection-lock conn)]
+			[frm (encode-frame type ch payload)])
+		(print-debug " <-- channel:" ch " type:" type " payload:" payload)
+		(mutex-lock! lock)
+		(write-string (bitstring->string frm)
+					  #f
+					  (connection-out conn))
+		(mutex-unlock! lock))))
 
   ;; Read the next frame on this channel, thread safe and blocking.
-  (define (read-frame conn ch)
-	(let ([lock (connection-lock conn)])
-	  (mutex-lock! lock)
-	  (let ((mbox (alist-ref ch (connection-mboxes conn))))
-		(mutex-unlock! lock)
-		(unless mbox (raise (condition `(exn message ,(format "unknown channel: ~a" ch)))))
-		(let ((frm (mailbox-receive! mbox)))
-		  (cond
-		   ((condition? frm)
-			(mailbox-push-back! mbox frm)
-			(raise frm))
-		   (else frm))))))
+  (define (read-frame channel)
+	(let* [(conn (channel-connection channel))
+		   (lock (connection-lock conn))
+		   (mbox (channel-mbox channel))]
+	  (let ((frm (mailbox-receive! mbox)))
+		(cond
+		 ((condition? frm)
+		  (mailbox-push-back! mbox frm)
+		  (raise frm))
+		 (else frm)))))
 
   ;; Like read-frame, but throw an error if the frame is not of the
   ;; expected class and method
-  (define (expect-frame conn ch class-id method-id)
-	(let* ((frm (read-frame conn ch)))
+  (define (expect-frame channel class-id method-id)
+	(let* [(frm (read-frame channel))]
 	  (cond
 	   ((and (= (frame-class-id frm) class-id)
 			 (= (frame-method-id frm) method-id))
@@ -127,13 +131,14 @@
 				  (map cdr (connection-mboxes connection)))
 		(mutex-unlock! lock))))
 
-  (define (heartbeats conn)
+  (define (heartbeats channel)
 	(lambda ()
-      (let ((interval (/ (alist-ref 'heartbeat (connection-parameters conn)) 2))
-            (payload (string->bitstring "")))
+      (let* [(conn (channel-connection channel))
+			 (interval (/ (alist-ref 'heartbeat (connection-parameters conn)) 2))
+             (payload (string->bitstring ""))]
 		(handle-exceptions exp (lambda i i)
 		  (let loop ()
-			(write-frame conn 0 8 payload)
+			(write-frame channel 8 payload)
 			(sleep interval)
 			(loop)))
 		(print-debug "heartbeats closing"))))
@@ -151,30 +156,30 @@
 	  (unless (eq? 'amqp (uri-scheme uri)) (error "not an AMQP uri"))
 	  (let-values (((i o) (tcp-connect host port)))
 		(let* ((conn (make-connection i o (make-mutex) '() '()))
-			   (ch (new-channel conn))
+			   (channel (new-channel conn))
 			   (dt (make-thread (dispatcher conn) "dispatcher")))
 		  (thread-start! dt)
 		  ;; Initiate handshake
 		  (write-string *amqp-header* #f o)
 		  ;; Authorization
-		  (let ((frm (expect-frame conn 0 10 10)))
-			(write-frame conn 0 1
+		  (let ((frm (expect-frame channel 10 10)))
+			(write-frame channel 1
                          (make-connection-start-ok  '(("connection_name" . "Chicken AMQP"))
                                                     "PLAIN"
                                                     (string-append "\x00" username "\x00" password)
                                                     "en_US")))
 		  ;; Negotiation
-		  (let* ((frm (expect-frame conn 0 10 30))
+		  (let* ((frm (expect-frame channel 10 30))
 				 (args (frame-properties frm)))
             (connection-parameters-set! conn args)
-            (write-frame conn 0 1 (make-connection-tune-ok (alist-ref 'channel-max args)
+            (write-frame channel 1 (make-connection-tune-ok (alist-ref 'channel-max args)
 														   (alist-ref 'frame-max args)
 														   (alist-ref 'heartbeat args)))
-            (write-frame conn 0 1 (make-connection-open vhost)))
+            (write-frame channel 1 (make-connection-open vhost)))
 		  ;; Connection is open
-		  (expect-frame conn 0 10 41)
+		  (expect-frame channel 10 41)
 		  ;; Start a heartbeat thread
-		  (let ((hb (make-thread (heartbeats conn) "heartbeats")))
+		  (let ((hb (make-thread (heartbeats channel) "heartbeats")))
 			(thread-start! hb))
 		  conn))))
 
