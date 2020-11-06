@@ -27,7 +27,7 @@
   
   (define (print-debug #!rest args) (when amqp-debug (apply print args)))
 
-  (define-record connection in out lock mboxes parameters)
+  (define-record connection in out lock mboxes parameters closing)
 
   (define-record channel connection mbox id lock)
 
@@ -98,7 +98,9 @@
 			(result (call/cc
 					 (lambda (break)
 					   (let loop ()
-						 (handle-exceptions exp (break exp)
+						 (handle-exceptions exp (break (if (connection-closing connection)
+														   (condition '(exn message "connection closed"))
+														   exp))
 						   (let ((first-byte (read-string 1 in)))
 							 (if (eq? #!eof first-byte)
 								 (break (condition '(exn message "connection closed unexpectedly")))
@@ -138,8 +140,8 @@
       (let* [(conn (channel-connection channel))
 			 (interval (/ (alist-ref 'heartbeat (connection-parameters conn)) 2))
              (payload (string->bitstring ""))]
-		(handle-exceptions exp (lambda i i)
-		  (let loop ()
+		(let loop ()
+		  (unless (port-closed? (connection-out conn))
 			(write-frame channel 8 payload)
 			(sleep interval)
 			(loop)))
@@ -157,7 +159,7 @@
 							  (uri-path uri))))]
 	  (unless (eq? 'amqp (uri-scheme uri)) (error "not an AMQP uri"))
 	  (let-values (((i o) (tcp-connect host port)))
-		(let* ((conn (make-connection i o (make-mutex) '() '()))
+		(let* ((conn (make-connection i o (make-mutex) '() '() #f))
 			   (channel (new-channel conn))
 			   (dt (make-thread (dispatcher conn) "dispatcher")))
 		  (thread-start! dt)
@@ -188,6 +190,7 @@
   (define (amqp-disconnect conn)
 	(let ((lock (connection-lock conn)))
 	  (mutex-lock! lock)
+	  (connection-closing-set! conn #t)
 	  (close-output-port (connection-out conn))
 	  (close-input-port (connection-in conn))
 	  (mutex-unlock! lock))))
