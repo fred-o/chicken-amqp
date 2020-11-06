@@ -27,7 +27,7 @@
 
   (define-record connection in out lock mboxes parameters)
 
-  (define-record channel connection mbox id)
+  (define-record channel connection mbox id lock)
 
   ;; Initialize a new channel object and register the mailbox with the
   ;; connection. 
@@ -36,7 +36,7 @@
 	  (mutex-lock! lock)
 	  (let* [(channel-id (+ 1 (foldl max -1 (map car (connection-mboxes conn)))))
 			 (mbox (make-mailbox))
-			 (channel (make-channel conn mbox channel-id))]
+			 (channel (make-channel conn mbox channel-id (make-mutex)))]
 		(connection-mboxes-set! conn
 								(cons (cons channel-id mbox)
 									  (connection-mboxes conn)))
