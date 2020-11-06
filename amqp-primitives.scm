@@ -2,11 +2,27 @@
 
 (module amqp-primitives *
 
-  (import scheme (chicken base) (chicken syntax)
+  (import scheme
+		  (chicken base)
+		  (chicken syntax)
+		  (chicken random)
           bitstring
-          uuid-v4
+		  srfi-18
           amqp-core
           amqp-091)
+
+  (define (make-uuid-v4)
+	(define (hex-char x) (string-ref (number->string x 16) 0))
+	(let ((u (make-string 36)))
+	  (do ((i 0 (add1 i)))
+		  ((= i 36))
+		(set! (string-ref u i)
+		  (case i
+			((8 13 18 23) #\-)
+			((14) #\4) ;; 4-bit version marker
+			((19) (hex-char (+ 8 (pseudo-random-integer 4)))) ;; 2-bit variant marker
+			(else (hex-char (pseudo-random-integer 16))))))
+	  u))
 
   ;; AMQP primitives API
 
