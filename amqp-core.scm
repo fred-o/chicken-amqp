@@ -2,10 +2,12 @@
 
 (module amqp-core *
   
-  (import scheme (chicken base) (chicken syntax)
+  (import scheme
+		  (chicken base)
+		  (chicken syntax)
 		  (chicken tcp)
 		  (chicken io)
-		  (chicken irregex)
+		  (chicken string)
           (chicken process-context)
 		  (chicken format)
 		  (chicken condition)
@@ -21,7 +23,7 @@
 						(#d0 8)
 						(0 8) (9 8) (1 8))))
 
-  (define amqp-debug (irregex-match? '(: "amqp") (or (get-environment-variable "DEBUG") "")))
+  (define amqp-debug (substring-index "amqp" (or (get-environment-variable "DEBUG") "")))
   
   (define (print-debug #!rest args) (when amqp-debug (apply print args)))
 
