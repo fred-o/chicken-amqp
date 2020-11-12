@@ -23,9 +23,9 @@
 						(#d0 8)
 						(0 8) (9 8) (1 8))))
 
-  (define amqp-debug (substring-index "amqp" (or (get-environment-variable "DEBUG") "")))
+  (define amqp-debug (make-parameter (substring-index "amqp" (or (get-environment-variable "DEBUG") ""))))
   
-  (define (print-debug #!rest args) (when amqp-debug (apply print args)))
+  (define (print-debug #!rest args) (when (amqp-debug) (apply print args)))
 
   (define-record connection in out lock mboxes parameters closing)
 
