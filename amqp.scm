@@ -4,4 +4,6 @@
 				  amqp-connect
 				  amqp-disconnect
 				  amqp-debug))
-  (reexport amqp-primitives))
+  (reexport (except amqp-primitives
+					make-uuid-v4
+					with-lock)))
