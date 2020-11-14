@@ -12,19 +12,6 @@
           amqp-core
           amqp-091)
 
-  (define (make-uuid-v4)
-	(define (hex-char x) (string-ref (number->string x 16) 0))
-	(let ((u (make-string 36)))
-	  (do ((i 0 (add1 i)))
-		  ((= i 36))
-		(set! (string-ref u i)
-		  (case i
-			((8 13 18 23) #\-)
-			((14) #\4) ;; 4-bit version marker
-			((19) (hex-char (+ 8 (pseudo-random-integer 4)))) ;; 2-bit variant marker
-			(else (hex-char (pseudo-random-integer 16))))))
-	  u))
-  
   ;; AMQP primitives API
 
   (define-record amqp-message delivery properties payload)
@@ -63,11 +50,12 @@
 						buf)))))
 
   (define (amqp-publish-message channel exchange routing-key payload properties #!key (mandatory 0) (immediate 0))
-	(with-locked channel
-				 (let [(frame-max (alist-ref 'frame-max (connection-parameters connection)))]
-				   (write-frame channel 1 (make-basic-publish exchange routing-key mandatory immediate))
-				   (write-frame channel 2 (encode-headers-payload 60 0 (/ (bitstring-length payload) 8) properties))
-				   (write-frame channel 3 payload))))
+	(let [(pl (->bitstring payload))]
+	  (with-locked channel
+				   (let [(frame-max (alist-ref 'frame-max (connection-parameters (channel-connection channel))))]
+					 (write-frame channel 1 (make-basic-publish exchange routing-key mandatory immediate))
+					 (write-frame channel 2 (encode-headers-payload 60 0 (/ (bitstring-length pl) 8) properties))
+					 (write-frame channel 3 pl)))))
 
   (define (amqp-channel-open connection)
 	(let ((channel (new-channel connection)))
@@ -75,50 +63,50 @@
 	  (expect-frame channel 20 11)
 	  channel))
 
-  (define (amqp-channel-close channel reply-code reply-text)
-	(with-locked channel
-				 (write-frame channel 1 (make-channel-close reply-code reply-text 20 40))
-				 (expect-frame channel 20 41)))
+  (define-syntax define-amqp-operation
+	(er-macro-transformer
+	 (lambda (exp inject compare)
+	   (define (applied-args ls)
+		 (cond ((null? ls) ls)
+			   ((eq? '#!key (car ls)) (applied-args (cdr ls)))
+			   ((list? (car ls)) (cons (caar ls) (applied-args (cdr ls))))
+			   (else (cons (car ls) (applied-args (cdr ls))))))
+	   (let* ([name (cadr exp)]
+			  [args (caddr exp)]
+			  [expect (cdddr exp)]
+			  [has-no-wait? (member '(no-wait 0) args)]
+			  [op (string->symbol (string-append "amqp-" (symbol->string name)))]
+			  [fn (string->symbol (string-append "make-" (symbol->string name)))])
+		 `(define (,op ,@(cons 'channel args))
+			(with-locked channel
+						 ,(if (null? expect)
+							  `(write-frame channel 1 (,fn ,@(applied-args args)))
+							  `(begin
+								 (write-frame channel 1 (,fn ,@(applied-args args)))
+								,(if has-no-wait?
+									`(if (= no-wait 1) (void)
+										 (frame-properties (expect-frame channel ,@expect)))
+									`(frame-properties (expect-frame channel ,@expect)))))))))))
+
+  (define-amqp-operation channel-flow (active) 20 21)
+  (define-amqp-operation channel-close (reply-code reply-text method-id class-id) 20 41)
   
-  (define (amqp-exchange-declare channel exchange type #!key (passive 0) (durable 0) (no-wait 0))
-	(with-locked channel
-				 (write-frame channel 1 (make-exchange-declare exchange type passive durable no-wait '()))
-				 (unless (= no-wait 1) (expect-frame channel 40 11))
-				 exchange))
+  (define-amqp-operation exchange-declare (exchange type #!key (passive 0) (durable 0) (no-wait 0) (arguments '())) 40 11)
+  (define-amqp-operation exchange-delete (exchange #!key (if-unused 0) (no-wait 0)) 40 21)
+  
+  (define-amqp-operation queue-declare (queue #!key (passive 0) (durable 0) (exclusive 0) (auto-delete 0) (no-wait 0) (arguments '())) 50 11)
+  (define-amqp-operation queue-bind (queue exchange routing-key #!key (no-wait 0) (arguments '())) 50 21)
+  (define-amqp-operation queue-purge (queue  #!key (no-wait 0)) 50 31)
+  (define-amqp-operation queue-delete (queue #!key (if-unused 0) (if-empty 0) (no-wait 0)) 50 41)
+  (define-amqp-operation queue-unbind (queue exchange routing-key #!key (arguments '())) 50 51)
+  
+  (define-amqp-operation basic-qos (prefetch-size prefetch-count global) 60 11)
+  (define-amqp-operation basic-consume (queue #!key (consumer-tag "") (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0) (arguments '())) 60 21)
+  (define-amqp-operation basic-cancel (consumer-tag #!key (no-wait 0)) 60 31)
+  
+  (define-amqp-operation basic-ack (delivery-tag #!key (multiple 0)))
+  (define-amqp-operation basic-reject (delivery-tag #!key (requeue 0)))
 
-  (define (amqp-exchange-delete channel exchange #!key (if-unused 0) (no-wait 0))
-	(with-locked channel
-				 (write-frame channel 1 (make-exchange-delete exchange if-unused no-wait))
-				 (unless (= no-wait 1) (expect-frame channel 40 21))))
-
-  (define (amqp-queue-declare channel queue #!key (passive 0) (durable 0) (exclusive 0) (auto-delete 0) (no-wait 0))
-	(with-locked channel
-				 (write-frame channel 1 (make-queue-declare queue passive durable exclusive auto-delete no-wait '()))
-				 (unless (= no-wait 1)
-				   (let [(reply (expect-frame channel 50 11))]
-					 (alist-ref 'queue (frame-properties reply))))))
-
-  (define (amqp-queue-bind channel queue exchange routing-key #!key (no-wait 0))
-	(with-locked channel
-				 (write-frame channel 1 (make-queue-bind queue exchange routing-key no-wait '()))
-				 (unless (= no-wait 1) (expect-frame channel 50 21))))
-
-  (define (amqp-basic-qos channel prefetch-size prefetch-count global)
-	(with-locked channel
-				 (write-frame channel 1 (make-basic-qos prefetch-size prefetch-count global))
-				 (expect-frame channel 60 11)))
-
-  (define (amqp-basic-consume channel queue  #!key (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0))
-	(with-locked channel
-				 (let [(tag (make-uuid-v4))]
-				   (write-frame channel 1 (make-basic-consume queue tag no-local no-ack exclusive no-wait '()))
-				   (unless (= no-wait 1) (expect-frame channel 60 21))
-				   tag)))
-
-  (define (amqp-basic-ack channel delivery-tag #!key (multiple 0))
-	(with-locked channel
-				 (write-frame channel 1 (make-basic-ack delivery-tag multiple))))
-
-  (define (amqp-basic-reject channel delivery-tag #!key (requeue 0))
-	(with-locked channel
-				 (write-frame channel 1 (make-basic-reject delivery-tag requeue)))))
+  (define-amqp-operation tx-select () 90 11)
+  (define-amqp-operation tx-commit () 90 21)
+  (define-amqp-operation tx-rollback () 90 31))

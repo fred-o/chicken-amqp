@@ -6,4 +6,4 @@
 				  amqp-debug))
   (reexport (except amqp-primitives
 					make-uuid-v4
-					with-lock)))
+					with-locked)))
