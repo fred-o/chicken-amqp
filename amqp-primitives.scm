@@ -89,7 +89,7 @@
 									`(frame-properties (expect-frame channel ,@expect)))))))))))
 
   (define-amqp-operation channel-flow (active) 20 21)
-  (define-amqp-operation channel-close (reply-code reply-text method-id class-id) 20 41)
+  (define-amqp-operation channel-close (#!key (reply-code 0) (reply-text "") (method-id 0) (class-id 0)) 20 41)
   
   (define-amqp-operation exchange-declare (exchange type #!key (passive 0) (durable 0) (no-wait 0) (arguments '())) 40 11)
   (define-amqp-operation exchange-delete (exchange #!key (if-unused 0) (no-wait 0)) 40 21)

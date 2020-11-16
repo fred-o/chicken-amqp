@@ -5,5 +5,5 @@
 				  amqp-disconnect
 				  amqp-debug))
   (reexport (except amqp-primitives
-					make-uuid-v4
+					define-amqp-operation
 					with-locked)))
