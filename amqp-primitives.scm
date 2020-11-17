@@ -103,9 +103,10 @@
   (define-amqp-operation basic-qos (prefetch-size prefetch-count global) 60 11)
   (define-amqp-operation basic-consume (queue #!key (consumer-tag "") (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0) (arguments '())) 60 21)
   (define-amqp-operation basic-cancel (consumer-tag #!key (no-wait 0)) 60 31)
-  
   (define-amqp-operation basic-ack (delivery-tag #!key (multiple 0)))
   (define-amqp-operation basic-reject (delivery-tag #!key (requeue 0)))
+  (define-amqp-operation basic-recover (requeue) 60 111)
+  (define-amqp-operation basic-recover-async (requeue))
 
   (define-amqp-operation tx-select () 90 11)
   (define-amqp-operation tx-commit () 90 21)

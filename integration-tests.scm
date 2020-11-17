@@ -46,7 +46,9 @@
 	(let ([msg (amqp-receive-message ch)])
 	  (test "basic.reject" #t (amqp-basic-reject ch (alist-ref 'delivery-tag (amqp-message-delivery msg)))))
 	
-	(test "basic.cancel" (list (cons 'consumer-tag ctag)) (amqp-basic-cancel ch ctag)))
+	(test "basic.cancel" (list (cons 'consumer-tag ctag)) (amqp-basic-cancel ch ctag))
+	(test "basic.recover" '() (amqp-basic-recover ch 1))
+	(test "basic.recover-async" #t (amqp-basic-recover-async ch 1)))
 
   (test "queue.delete" '((message-count . 0)) (amqp-queue-delete ch "test-queue-1" if-empty: 1))
   
