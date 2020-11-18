@@ -29,18 +29,19 @@
 
   (define-record connection in out lock mboxes parameters closing)
 
-  (define-record channel connection mbox id lock)
-
-  ;; Initialize a new channel object and register the mailbox with the
-  ;; connection. 
+  (define-record channel connection method-mbox content-mbox id lock)
+  
+  ;; Initialize a new channel object and register its mailboxes with
+  ;; the connection.
   (define (new-channel conn)
 	(let ((lock (connection-lock conn)))
 	  (mutex-lock! lock)
 	  (let* [(channel-id (+ 1 (foldl max -1 (map car (connection-mboxes conn)))))
-			 (mbox (make-mailbox))
-			 (channel (make-channel conn mbox channel-id (make-mutex)))]
+			 (method-mbox (make-mailbox))
+			 (content-mbox (make-mailbox))
+			 (channel (make-channel conn method-mbox content-mbox channel-id (make-mutex)))]
 		(connection-mboxes-set! conn
-								(cons (cons channel-id mbox)
+								(cons (cons channel-id (cons method-mbox content-mbox))
 									  (connection-mboxes conn)))
 		(mutex-unlock! lock)
 		channel)))
@@ -60,10 +61,8 @@
 		(mutex-unlock! lock))))
 
   ;; Read the next frame on this channel, thread safe and blocking.
-  (define (read-frame channel)
-	(let* [(conn (channel-connection channel))
-		   (lock (connection-lock conn))
-		   (mbox (channel-mbox channel))]
+  (define (read-frame channel #!key (accessor channel-method-mbox))
+	(let* [(mbox (accessor channel))]
 	  (let ((frm (mailbox-receive! mbox)))
 		(cond
 		 ((condition? frm)
@@ -73,8 +72,8 @@
 
   ;; Like read-frame, but throw an error if the frame is not of the
   ;; expected class and method
-  (define (expect-frame channel class-id method-id)
-	(let* [(frm (read-frame channel))]
+  (define (expect-frame channel class-id method-id #!key (accessor channel-method-mbox))
+	(let* [(frm (read-frame channel accessor: accessor))]
 	  (cond
 	   ((frame-match? frm #f class-id method-id)
 		frm)
@@ -111,11 +110,20 @@
 									   (when frm
 										 (print-debug " --> " frm)
 										 (mutex-lock! lock)
-										 (let ((mbox (alist-ref (frame-channel frm)
-																(connection-mboxes connection))))
+										 (let ((mbox-pair (alist-ref (frame-channel frm)
+																	 (connection-mboxes connection))))
 										   (mutex-unlock! lock)
-										   (if mbox
-											   (mailbox-send! mbox frm)
+										   (if mbox-pair
+											   (begin
+												 ;; Dispatch to method-mbox / content-mbox depending on frame type.
+												 (mailbox-send! (if (or (frame-match? frm '(2 3) #f #f)
+																		(frame-match? frm 1 60 '(50 60 71)))
+																	(cdr mbox-pair)
+																	(car mbox-pair)) frm)
+												 ;; A special case: basic.get-ok is dispatched to both the method and
+												 ;; content mbox as it is both a method response and a message preamble
+												 (when (frame-match? frm 1 60 71)
+												   (mailbox-send! (car mbox-pair) frm)))
 											   (error "no mailbox for channel")))
 										 ;; Check for connection close
 										 (if (frame-match? frm 1 10 50)
@@ -129,7 +137,7 @@
 		;; Time to poison the well
 		(mutex-lock! lock)
 		(for-each (lambda (mbox) (mailbox-send! mbox result))
-				  (map cdr (connection-mboxes connection)))
+				  (map cadr (connection-mboxes connection)))
 		(mutex-unlock! lock))))
 
   (define (heartbeats channel)

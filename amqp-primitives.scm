@@ -33,14 +33,14 @@
 
   (define (amqp-receive-message channel)
 	(with-locked channel
-				 (let* [(mthd (expect-frame channel 60 60))
-						(hdrs (read-frame channel))
+				 (let* [(mthd (expect-frame channel 60 '(50 60 71) accessor: channel-content-mbox))
+						(hdrs (read-frame channel accessor: channel-content-mbox))
 						(body-size (frame-body-size hdrs))
 						(buf (string->bitstring ""))]
 				   (let loop []
 					 (when (< (bitstring-length buf) body-size)
 					   (set! buf (bitstring-append! buf
-													(frame-payload (read-frame channel))))
+													(frame-payload (read-frame channel accessor: channel-content-mbox))))
 					   (loop)))
 				   (make-amqp-message
 					(frame-properties mthd)
@@ -90,7 +90,9 @@
 
   (define-amqp-operation channel-flow (active) 20 21)
   (define-amqp-operation channel-close (#!key (reply-code 0) (reply-text "") (method-id 0) (class-id 0)) 20 41)
-  
+
+  ;;; (procedure (amqp-exchange-declare channel exchange type [passive] [durable] [no-wait] [arguments]))
+  ;;; Declare an exchange
   (define-amqp-operation exchange-declare (exchange type #!key (passive 0) (durable 0) (no-wait 0) (arguments '())) 40 11)
   (define-amqp-operation exchange-delete (exchange #!key (if-unused 0) (no-wait 0)) 40 21)
   
@@ -103,6 +105,7 @@
   (define-amqp-operation basic-qos (prefetch-size prefetch-count global) 60 11)
   (define-amqp-operation basic-consume (queue #!key (consumer-tag "") (no-local 0) (no-ack 0) (exclusive 0) (no-wait 0) (arguments '())) 60 21)
   (define-amqp-operation basic-cancel (consumer-tag #!key (no-wait 0)) 60 31)
+  (define-amqp-operation basic-get (queue #!key (no-ack 0)) 60 '(71 72))
   (define-amqp-operation basic-ack (delivery-tag #!key (multiple 0)))
   (define-amqp-operation basic-reject (delivery-tag #!key (requeue 0)))
   (define-amqp-operation basic-recover (requeue) 60 111)
