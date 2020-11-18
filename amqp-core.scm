@@ -76,11 +76,9 @@
   (define (expect-frame channel class-id method-id)
 	(let* [(frm (read-frame channel))]
 	  (cond
-	   ((and (= (frame-class-id frm) class-id)
-			 (= (frame-method-id frm) method-id))
+	   ((frame-match? frm #f class-id method-id)
 		frm)
-	   ((and (= 20 (frame-class-id frm))
-			 (= 40 (frame-method-id frm)))
+	   ((frame-match? frm #f 20 40)
 		(let ((props (frame-properties frm)))
 		  (raise (condition '(exn message "channel closed")
 							`(amqp reply-text ,(alist-ref 'reply-text props)
@@ -120,8 +118,7 @@
 											   (mailbox-send! mbox frm)
 											   (error "no mailbox for channel")))
 										 ;; Check for connection close
-										 (if (and (= 10 (frame-class-id frm))
-												  (= 50 (frame-method-id frm)))
+										 (if (frame-match? frm 1 10 50)
 											 (let ((props (frame-properties frm)))
 											   (break (condition '(exn message "connection closed")
 																 `(amqp reply-text ,(alist-ref 'reply-text props)

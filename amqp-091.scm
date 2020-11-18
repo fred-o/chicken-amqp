@@ -3,7 +3,6 @@
 (module amqp-091 *
   (import scheme
           (chicken base)
-          (chicken syntax)
           (chicken format)
           (chicken bitwise)
           srfi-1
@@ -18,6 +17,15 @@
              (frame-class-id frm)
              (frame-method-id frm)))
 
+  (define (frame-match? frm type class-id method-id)
+	(define (cmp t v)
+	  (cond ((not t) #t)
+			((list? t) (member v t))
+			(else (= t v))))
+    (not (not (and (cmp type (frame-type frm))
+				   (cmp class-id (frame-class-id frm))
+				   (cmp method-id (frame-method-id frm)))))) 
+  
   (define (encode-table props)
     (apply bitstring-append
            (map (lambda (prop)
