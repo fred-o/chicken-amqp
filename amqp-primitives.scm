@@ -55,7 +55,8 @@
 				   (let [(frame-max (alist-ref 'frame-max (connection-parameters (channel-connection channel))))]
 					 (write-frame channel 1 (make-basic-publish exchange routing-key mandatory immediate))
 					 (write-frame channel 2 (encode-headers-payload 60 0 (/ (bitstring-length pl) 8) properties))
-					 (write-frame channel 3 pl)))))
+					 (write-frame channel 3 pl)
+					 (void)))))
 
   (define (amqp-channel-open connection)
 	(let ((channel (new-channel connection)))
@@ -79,20 +80,17 @@
 			  [fn (string->symbol (string-append "make-" (symbol->string name)))])
 		 `(define (,op ,@(cons 'channel args))
 			(with-locked channel
-						 ,(if (null? expect)
-							  `(write-frame channel 1 (,fn ,@(applied-args args)))
-							  `(begin
-								 (write-frame channel 1 (,fn ,@(applied-args args)))
-								,(if has-no-wait?
-									`(if (= no-wait 1) (void)
-										 (frame-properties (expect-frame channel ,@expect)))
-									`(frame-properties (expect-frame channel ,@expect)))))))))))
+						 (write-frame channel 1 (,fn ,@(applied-args args)))
+						 ,(cond ((null? expect) `(void))
+								(has-no-wait?
+								 `(if (= no-wait 1) (void)
+									  (frame-properties (expect-frame channel ,@expect))))
+								(else
+								 `(frame-properties (expect-frame channel ,@expect))))))))))
 
   (define-amqp-operation channel-flow (active) 20 21)
   (define-amqp-operation channel-close (#!key (reply-code 0) (reply-text "") (method-id 0) (class-id 0)) 20 41)
 
-  ;;; (procedure (amqp-exchange-declare channel exchange type [passive] [durable] [no-wait] [arguments]))
-  ;;; Declare an exchange
   (define-amqp-operation exchange-declare (exchange type #!key (passive 0) (durable 0) (no-wait 0) (arguments '())) 40 11)
   (define-amqp-operation exchange-delete (exchange #!key (if-unused 0) (no-wait 0)) 40 21)
   
