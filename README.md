@@ -260,3 +260,11 @@ argument to the other functions.
 #### [procedure] `(amqp-tx-rollback CHANNEL)`
   
 
+
+## License
+
+BSD
+
+## Version History
+
+* 0.9 - Preparing for an 1.0 release

@@ -270,4 +270,13 @@
   ;;; #### The Transaction Class
   (define (amqp-tx-select channel) ())
   (define (amqp-tx-commit channel) ())
-  (define (amqp-tx-rollback channel) ()))
+  (define (amqp-tx-rollback channel) ())
+
+  ;;; ## License
+
+  ;;; BSD
+
+  ;;; ## Version History
+
+  ;;; * 0.9 - Preparing for an 1.0 release
+  )
