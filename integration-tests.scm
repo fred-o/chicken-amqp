@@ -81,7 +81,10 @@
   (test "exchange.delete" '() (amqp-exchange-delete ch "test-exchange-1"))
   (test "channel.close" '() (amqp-channel-close ch))
 
-  (amqp-disconnect c))
+  (amqp-disconnect c)
+  (test-error "method after close" (amqp-exchange-declare "test-exchange-2" "topic" :auto-delete 1))
+  (test-error "publish after close" (amqp-publish-message ch "test-exchange-1" "ping" "hello, world" '()))
+  (test-error "receive after close" (amqp-receive-message ch)))
 
 (test-exit)
 

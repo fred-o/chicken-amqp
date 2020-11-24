@@ -21,7 +21,7 @@
   
   (define (print-debug #!rest args) (when (amqp-debug) (apply print args)))
 
-  (define-record connection in out lock mboxes parameters closing)
+  (define-record connection in out lock mboxes parameters closing threads)
 
   (define-record channel connection method-mbox content-mbox id lock)
   
@@ -44,7 +44,7 @@
   (define (write-frame channel type payload)
 	(let [(conn (channel-connection channel))
 		  (ch (channel-id channel))]
-	  (if (port-closed? (connection-out conn)) (error "connection closed"))
+	  (if (connection-closing conn) (error "connection closed"))
 	  (let ([lock (connection-lock conn)]
 			[frm (encode-frame type ch payload)])
 		(print-debug " <-- channel:" ch " type:" type " payload:" payload)
@@ -130,8 +130,10 @@
 		(print-debug "dispatcher closing")
 		;; Time to poison the well
 		(mutex-lock! lock)
-		(for-each (lambda (mbox) (mailbox-send! mbox result))
-				  (map cadr (connection-mboxes connection)))
+		(for-each (lambda (mbox-pair)
+					(mailbox-send! (car mbox-pair) result)
+					(mailbox-send! (cdr mbox-pair) result))
+				  (map cdr (connection-mboxes connection)))
 		(mutex-unlock! lock))))
 
   (define (heartbeats channel)
@@ -139,8 +141,10 @@
       (let* [(conn (channel-connection channel))
 			 (interval (/ (alist-ref 'heartbeat (connection-parameters conn)) 2))
              (payload (string->bitstring ""))]
-		(let loop ()
-		  (unless (port-closed? (connection-out conn))
+		(handle-exceptions exp
+		  (unless (connection-closing conn)
+			(raise exp))
+		  (let loop ()
 			(write-frame channel 8 payload)
 			(sleep interval)
 			(loop)))
@@ -158,9 +162,10 @@
 							  (uri-path uri))))]
 	  (unless (eq? 'amqp (uri-scheme uri)) (error "not an AMQP uri"))
 	  (let-values (((i o) (tcp-connect host port)))
-		(let* ((conn (make-connection i o (make-mutex) '() '() #f))
+		(let* ((conn (make-connection i o (make-mutex) '() '() #f '()))
 			   (channel (new-channel conn))
-			   (dt (make-thread (dispatcher conn) "dispatcher")))
+			   (dt (make-thread (dispatcher conn) "dispatcher"))
+			   (hb (make-thread (heartbeats channel) "heartbeats")))
 		  (thread-start! dt)
 		  ;; Initiate handshake
 		  (write-string amqp-091-header #f o)
@@ -182,14 +187,13 @@
 		  ;; Connection is open
 		  (expect-frame channel 10 41)
 		  ;; Start a heartbeat thread
-		  (let ((hb (make-thread (heartbeats channel) "heartbeats")))
-			(thread-start! hb))
+		  (thread-start! hb)
+		  (connection-threads-set! conn (list dt hb))
 		  conn))))
 
   (define (amqp-disconnect conn)
 	(let ((lock (connection-lock conn)))
-	  (mutex-lock! lock)
 	  (connection-closing-set! conn #t)
+	  (for-each (lambda (t) (thread-signal! t (condition '(closing)))) (connection-threads conn))
 	  (close-output-port (connection-out conn))
-	  (close-input-port (connection-in conn))
-	  (mutex-unlock! lock))))
+	  (close-input-port (connection-in conn)))))
