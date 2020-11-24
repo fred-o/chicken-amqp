@@ -84,57 +84,54 @@
   (define (dispatcher connection)
 	(lambda ()
 	  (let* ((lock (connection-lock connection))
-			(in (connection-in connection))
-			(buf (->bitstring ""))
-			(result (call/cc
-					 (lambda (break)
-					   (let loop ()
-						 (handle-exceptions exp (break (if (connection-closing connection)
-														   (condition '(exn message "connection closed"))
-														   exp))
-						   (let ((first-byte (read-string 1 in)))
-							 (if (eq? #!eof first-byte)
-								 (break (condition '(exn message "connection closed unexpectedly")))
-								 (begin
-								   (bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
-								   (let parse-loop ()
-									 (let* ((message/rest (parse-frame buf))
-											(frm (car message/rest)))
-									   (set! buf (cdr message/rest))
-									   (when frm
-										 (print-debug " --> " frm)
-										 (mutex-lock! lock)
-										 (let ((mbox-pair (alist-ref (frame-channel frm)
-																	 (connection-mboxes connection))))
-										   (mutex-unlock! lock)
-										   (if mbox-pair
-											   (begin
-												 ;; Dispatch to method-mbox / content-mbox depending on frame type.
-												 (mailbox-send! (if (or (frame-match? frm '(2 3) #f #f)
-																		(frame-match? frm 1 60 '(50 60 71)))
-																	(cdr mbox-pair)
-																	(car mbox-pair)) frm)
-												 ;; A special case: basic.get-ok is dispatched to both the method and
-												 ;; content mbox as it is both a method response and a message preamble
-												 (when (frame-match? frm 1 60 71)
-												   (mailbox-send! (car mbox-pair) frm)))
-											   (error "no mailbox for channel")))
-										 ;; Check for connection close
-										 (if (frame-match? frm 1 10 50)
-											 (let ((props (frame-properties frm)))
-											   (break (condition '(exn message "connection closed")
-																 `(amqp reply-text ,(alist-ref 'reply-text props)
-																		reply-code ,(alist-ref 'reply-code props))))))
-										 (parse-loop)))))))
-						   (loop)))))))
-		(print-debug "dispatcher closing")
-		;; Time to poison the well
-		(mutex-lock! lock)
-		(for-each (lambda (mbox-pair)
-					(mailbox-send! (car mbox-pair) result)
-					(mailbox-send! (cdr mbox-pair) result))
-				  (map cdr (connection-mboxes connection)))
-		(mutex-unlock! lock))))
+			 (in (connection-in connection))
+			 (buf (->bitstring "")))
+		(handle-exceptions exp
+			(begin
+			  (print-debug "dispatcher closing")
+			  ;; Time to poison the well
+			  (mutex-lock! lock)
+			  (for-each (lambda (mbox-pair)
+						  (mailbox-send! (car mbox-pair) exp)
+						  (mailbox-send! (cdr mbox-pair) exp))
+						(map cdr (connection-mboxes connection)))
+			  (mutex-unlock! lock))
+		  (let loop ()
+			(let ((first-byte (read-string 1 in)))
+			  (if (eq? #!eof first-byte)
+				  (raise (condition '(exn message "connection closed unexpectedly")))
+				  (begin
+					(bitstring-append! buf (string->bitstring (string-append first-byte (read-buffered in))))
+					(let parse-loop ()
+					  (let* ((message/rest (parse-frame buf))
+							 (frm (car message/rest)))
+						(set! buf (cdr message/rest))
+						(when frm
+						  (print-debug " --> " frm)
+						  (mutex-lock! lock)
+						  (let ((mbox-pair (alist-ref (frame-channel frm)
+													  (connection-mboxes connection))))
+							(mutex-unlock! lock)
+							(if mbox-pair
+								(begin
+								  ;; Dispatch to method-mbox / content-mbox depending on frame type.
+								  (mailbox-send! (if (or (frame-match? frm '(2 3) #f #f)
+														 (frame-match? frm 1 60 '(50 60 71)))
+													 (cdr mbox-pair)
+													 (car mbox-pair)) frm)
+								  ;; A special case: basic.get-ok is dispatched to both the method and
+								  ;; content mbox as it is both a method response and a message preamble
+								  (when (frame-match? frm 1 60 71)
+									(mailbox-send! (car mbox-pair) frm)))
+								(error "no mailbox for channel")))
+						  ;; Check for connection close
+						  (if (frame-match? frm 1 10 50)
+							  (let ((props (frame-properties frm)))
+								(raise (condition '(exn message "connection closed")
+												  `(amqp reply-text ,(alist-ref 'reply-text props)
+														 reply-code ,(alist-ref 'reply-code props))))))
+						  (parse-loop)))))))
+			(loop))))))
 
   (define (heartbeats channel)
 	(lambda ()
