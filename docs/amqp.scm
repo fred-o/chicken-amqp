@@ -278,5 +278,7 @@
 
   ;;; ## Version History
 
+  ;;; * 1.0.0 - First public release
+  
   ;;; * 0.9 - Preparing for an 1.0 release
   )

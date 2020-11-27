@@ -199,4 +199,4 @@
    (payload bitstring)
    (#xce 8)))
 
-  (include "parser.scm"))
+  (include "amqp-091-generated.scm"))
