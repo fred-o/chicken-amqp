@@ -178,8 +178,8 @@
 				 (args (frame-properties frm)))
             (connection-parameters-set! conn args)
             (write-frame channel 1 (make-connection-tune-ok (alist-ref 'channel-max args)
-														   (alist-ref 'frame-max args)
-														   (alist-ref 'heartbeat args)))
+															(alist-ref 'frame-max args)
+															(alist-ref 'heartbeat args)))
             (write-frame channel 1 (make-connection-open vhost)))
 		  ;; Connection is open
 		  (expect-frame channel 10 41)

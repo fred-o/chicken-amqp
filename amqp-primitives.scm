@@ -35,7 +35,7 @@
 	(with-locked channel
 				 (let* [(mthd (expect-frame channel 60 '(50 60 71) accessor: channel-content-mbox))
 						(hdrs (read-frame channel accessor: channel-content-mbox))
-						(body-size (frame-body-size hdrs))
+						(body-size (* 8 (frame-body-size hdrs)))
 						(buf (string->bitstring ""))]
 				   (let loop []
 					 (when (< (bitstring-length buf) body-size)
@@ -52,10 +52,14 @@
   (define (amqp-publish-message channel exchange routing-key payload properties #!key (mandatory 0) (immediate 0))
 	(let [(pl (->bitstring payload))]
 	  (with-locked channel
-				   (let [(frame-max (alist-ref 'frame-max (connection-parameters (channel-connection channel))))]
+				   (let [(frame-max (- (alist-ref 'frame-max (connection-parameters (channel-connection channel))) 8))
+						 (payload-length (/ (bitstring-length pl) 8))]
 					 (write-frame channel 1 (make-basic-publish exchange routing-key mandatory immediate))
-					 (write-frame channel 2 (encode-headers-payload 60 0 (/ (bitstring-length pl) 8) properties))
-					 (write-frame channel 3 pl)
+					 (write-frame channel 2 (encode-headers-payload 60 0 payload-length properties))
+					 (let loop ((from 0) (to frame-max))
+					   (write-frame channel 3 (bitstring-share pl (* from 8) (* (min to payload-length) 8)))
+					   (when (< to payload-length)
+						 (loop (+ from frame-max) (+ to frame-max))))
 					 (void)))))
 
   (define (amqp-channel-open connection)
